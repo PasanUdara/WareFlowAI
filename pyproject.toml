@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wareflow-ai"
+version = "0.1.0"
+description = "Multi-agent AI system for warehouse robot fleet coordination"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "WareFlow AI Development Team" }
+]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --import-mode=importlib"
+testpaths = [
+    "tests",
+    "agents/task_planning/tests",
+    "agents/exception_handling/tests",
+    "agents/knowledge_compliance/tests",
+]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "data/vector_store",
+]
