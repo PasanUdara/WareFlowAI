@@ -48,15 +48,136 @@ The system is composed of **3 core specialized agents** and **1 unified integrat
 
 ---
 
-## 🚀 Getting Started (Setup Placeholder)
+## 🚀 Getting Started
 
-### 1. Prerequisites
+### Option A: Running with Docker & Docker Compose (Recommended)
+
+Running with Docker is the quickest and cleanest way to launch the entire WareFlow AI system—including the FastAPI gateway, LangGraph agents, warehouse simulation, and containerized Qdrant vector database—without needing local Python dependencies.
+
+#### 1. Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed on Windows, macOS, or Linux.
+- Ensure **Docker Desktop is started and running** before executing Docker commands.
+
+#### 2. Clone Repository & Navigate
+```bash
+git clone https://github.com/your-org/WareFlowAI.git
+cd WareFlowAI
+```
+
+#### 3. Configure Environment Variables
+Create a local `.env` file from the provided template:
+
+- **On Linux / macOS / Git Bash:**
+  ```bash
+  cp .env.example .env
+  ```
+- **On Windows PowerShell:**
+  ```powershell
+  Copy-Item .env.example .env
+  ```
+
+*(Optional)*: If you want to use live LLM parsing instead of mock responses, open `.env` and add your OpenAI API key:
+```ini
+OPENAI_API_KEY=sk-your-actual-api-key-here
+```
+
+#### 4. Build and Start the Services
+
+- **Standard Startup (FastAPI Gateway + Qdrant Vector DB):**
+  ```bash
+  docker compose up --build
+  ```
+- **Run in Background (Detached Mode):**
+  ```bash
+  docker compose up -d --build
+  ```
+- **Run with Live Continuous Simulation Engine:**
+  To start the continuous headless warehouse simulation loop alongside the gateway and vector database:
+  ```bash
+  docker compose --profile full up --build
+  ```
+
+#### 5. Verify & Access Dashboards
+Once running, the following services and endpoints are immediately available:
+
+| Service / Interface | URL | Description |
+| :--- | :--- | :--- |
+| **FastAPI Swagger UI** | [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive API documentation and testing interface |
+| **ReDoc API Reference** | [http://localhost:8000/redoc](http://localhost:8000/redoc) | Alternative OpenAPI documentation view |
+| **Service Health Check** | [http://localhost:8000/health](http://localhost:8000/health) | Real-time health status of agents and simulation |
+| **Qdrant Web Console** | [http://localhost:6333/dashboard](http://localhost:6333/dashboard) | Vector database web GUI and collection inspector |
+| **Qdrant REST API** | [http://localhost:6333](http://localhost:6333) | Vector DB REST endpoints |
+| **WebSocket Telemetry** | `ws://localhost:8000/ws/telemetry` | 2Hz live AMR position and battery stream |
+
+#### 6. Test Endpoints via CLI
+
+- **Check Gateway Health:**
+  ```bash
+  curl http://localhost:8000/health
+  ```
+- **Dispatch a Warehouse Order:**
+  ```bash
+  curl -X POST http://localhost:8000/api/v1/orders/dispatch \
+    -H "Content-Type: application/json" \
+    -d "{\"order_text\": \"Fetch 2 medical kits from Shelf-A1 to Station-1\"}"
+  ```
+- **Query Fleet Telemetry:**
+  ```bash
+  curl http://localhost:8000/api/v1/fleet/status
+  ```
+- **Trigger Emergency Stop (E-Stop):**
+  ```bash
+  curl -X POST http://localhost:8000/api/v1/simulation/e-stop
+  ```
+- **Resume After Emergency Stop:**
+  ```bash
+  curl -X POST "http://localhost:8000/api/v1/simulation/e-stop?resume=true"
+  ```
+- **Verify SOP Compliance:**
+  ```bash
+  curl "http://localhost:8000/api/v1/compliance/verify?payload_weight=15.0&speed=1.0&is_hazmat=false&target_zone=General"
+  ```
+
+#### 7. Useful Docker Management Commands
+
+- **Stream Container Logs:**
+  ```bash
+  docker compose logs -f app
+  ```
+- **Run Automated Tests in Container:**
+  ```bash
+  docker compose run --rm app pytest
+  ```
+- **Access Container Shell (Bash):**
+  ```bash
+  docker compose exec app bash
+  ```
+- **Stop All Containers:**
+  ```bash
+  docker compose down
+  ```
+- **Stop and Reset Database Volume:**
+  ```bash
+  docker compose down -v
+  ```
+
+#### 8. Docker Troubleshooting
+- **Error: `error during connect: ... pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`**:
+  Docker Desktop is not currently running. Launch **Docker Desktop** from your Applications / Start Menu and wait until the whale icon indicates "Engine Running".
+- **Port Conflict (Port 8000 or 6333 already in use)**:
+  Ensure no other local process is occupying port `8000` or `6333`, or change the host port mappings in `docker-compose.yml` (e.g. `"8080:8000"`).
+
+---
+
+### Option B: Running Locally (Without Docker)
+
+#### 1. Prerequisites
 - Python 3.10 or higher
 - Git
-- (Optional) Docker for containerized Qdrant vector database
 
-### 2. Clone Repository & Setup Environment
+#### 2. Create & Activate Virtual Environment
 ```bash
+# Clone and navigate
 git clone https://github.com/your-org/WareFlowAI.git
 cd WareFlowAI
 
@@ -64,31 +185,36 @@ cd WareFlowAI
 python -m venv .venv
 
 # Activate virtual environment
-# On Windows:
-.venv\Scripts\activate
-# On Linux/macOS:
+# On Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# On Linux / macOS:
 source .venv/bin/activate
 
-# Install dependencies
+# Install required dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment Variables
-Copy `.env.example` to `.env` and fill in necessary keys:
+#### 3. Configure Local Environment
 ```bash
+# On Linux/macOS:
 cp .env.example .env
+# On Windows PowerShell:
+Copy-Item .env.example .env
+```
+*Note: When running locally without Docker, set `QDRANT_HOST=localhost` in `.env`.*
+
+#### 4. Run Application Gateway & Simulation
+In Terminal 1 (Start FastAPI Gateway):
+```bash
+python main.py
 ```
 
-### 4. Run Application & Services
+In Terminal 2 (Start Warehouse Simulation):
 ```bash
-# Start FastAPI server & dashboard
-python main.py
-
-# In a separate terminal, launch the warehouse simulation
 python -m simulation.sim_runner
 ```
 
-### 5. Run Automated Tests
+#### 5. Run Automated Tests
 ```bash
 pytest
 ```
