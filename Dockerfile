@@ -12,17 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Set working directory
 WORKDIR /app
 
-# Install system utilities (curl for Docker healthcheck)
-# Uses retry logic and a fallback mirror to handle 403/network errors
-RUN apt-get update \
-    || { \
-         echo "Default mirror failed, switching to Cloudflare mirror..." \
-         && sed -i 's|deb.debian.org|debian.map.fastly.net|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
-         sed -i 's|deb.debian.org|debian.map.fastly.net|g' /etc/apt/sources.list 2>/dev/null; \
-         apt-get update; \
-       } \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+
 
 # Install Python dependencies first for efficient layer caching
 COPY requirements.txt .
@@ -45,9 +35,9 @@ USER wareflow
 # Expose FastAPI gateway port
 EXPOSE 8000
 
-# Container healthcheck
+# Container healthcheck (uses Python instead of curl to avoid apt-get dependency)
 HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 # Default command: launch FastAPI server with Uvicorn
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
