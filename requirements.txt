@@ -11,7 +11,7 @@ langchain-core>=0.1.40
 langchain-openai>=0.1.0
 
 # Vector Database & Retrieval
-qdrant-client>=1.8.0
+qdrant-client>=1.8.0,<1.10.0
 
 # Warehouse Simulation & Visuals
 pygame>=2.5.2
@@ -30,3 +30,6 @@ python-dotenv>=1.0.1
 pytest>=8.1.0
 pytest-asyncio>=0.23.5
 ruff>=0.3.4
+
+# Local Embeddings for RAG
+fastembed>=0.3.4

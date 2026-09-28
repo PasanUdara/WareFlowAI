@@ -1,6 +1,8 @@
 """
 SOP Document Ingestion Pipeline [Member 3]
-Parses markdown SOP files, splits into semantic chunks, and indexes into Qdrant collection.
+
+Loads warehouse SOP markdown files and splits them into
+retrieval-friendly sections with metadata.
 """
 
 from typing import List, Dict, Any
@@ -8,34 +10,95 @@ from pathlib import Path
 
 
 class SOPIngestor:
-    """Chunks and indexes SOP markdown documents."""
-    
+    """Loads and chunks SOP markdown documents."""
+
     def __init__(self, sops_dir: str = "data/sop_documents"):
         self.sops_dir = Path(sops_dir)
-        
+
     def load_documents(self) -> List[Dict[str, Any]]:
-        """
-        Scan directory and read markdown SOP files.
-        
-        # TODO: [Member 3] Implement markdown header splitting and metadata tagging.
-        """
+        """Load all markdown SOP files from the SOP directory."""
+
         docs = []
+
         if not self.sops_dir.exists():
             return docs
-            
-        for file_path in self.sops_dir.glob("*.md"):
+
+        for file_path in sorted(self.sops_dir.glob("*.md")):
             with open(file_path, "r", encoding="utf-8") as f:
-                docs.append({
-                    "filename": file_path.name,
-                    "content": f.read()
-                })
+                docs.append(
+                    {
+                        "filename": file_path.name,
+                        "content": f.read(),
+                    }
+                )
+
         return docs
+
+    def split_into_chunks(
+        self, documents: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Split SOP documents using markdown headings.
+
+        Each heading section becomes a retrieval chunk.
+        """
+
+        chunks = []
+
+        for document in documents:
+            filename = document["filename"]
+            content = document["content"]
+
+            current_section = None
+            current_lines = []
+
+            for line in content.splitlines():
+
+                if line.startswith("# "):
+                    current_section = line[2:].strip()
+                    continue
+
+                if line.startswith("## "):
+                    if current_section and current_lines:
+                      chunks.append(
+                        {
+                            "filename": filename,
+                            "section_title": current_section,
+                            "content": "\n".join(current_lines).strip(),
+                            "sop_id": filename.replace("sop_", "").replace(".md", "").upper(),
+                        }
+                    )
+
+                    current_section = line[3:].strip()
+                    current_lines = []
+                    continue
+
+                current_lines.append(line)
+
+            if current_section and current_lines:
+                chunks.append(
+                    {
+                        "filename": filename,
+                        "section_title": current_section,
+                        "content": "\n".join(current_lines).strip(),
+                        "sop_id": filename.replace("sop_", "").replace(".md", "").upper(),
+                    }
+                )
+
+        return [chunk for chunk in chunks if chunk["content"]]
+
+    def prepare_chunks(self) -> List[Dict[str, Any]]:
+        """Load SOP files and convert them into retrieval chunks."""
+
+        documents = self.load_documents()
+        return self.split_into_chunks(documents)
 
     def index_all(self) -> int:
         """
-        Embed all loaded SOP documents into Qdrant vector database.
-        
-        # TODO: [Member 3] Upsert vectors to Qdrant collection.
+        Prepare SOP chunks for vector indexing.
+
+        Qdrant indexing will be added in the next stage.
         """
-        docs = self.load_documents()
-        return len(docs)
+
+        chunks = self.prepare_chunks()
+        return len(chunks)
