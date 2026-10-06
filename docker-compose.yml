@@ -47,6 +47,20 @@ services:
     networks:
       - wareflow_net
 
+  # WareFlow AI Frontend Dashboard (React + Vite)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: wareflow_frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - wareflow_net
+
   # Warehouse Simulation Engine (Optional runner profile)
   simulation:
     build:

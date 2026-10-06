@@ -1,42 +1,30 @@
 """
-State definition for Task Planning Agent LangGraph workflow [Member 1]
+State Schema for Task Planning Agent [Member 1]
+TypedDict definition shared across all LangGraph nodes.
 """
 
 from typing import TypedDict, Optional, List, Dict, Any
 
 
-class SubTask(TypedDict):
-    """Represents a single decomposed subtask."""
-    subtask_id: str
-    task_type: str  # e.g., "PICK", "TRANSPORT", "DELIVER"
-    sku: str
-    quantity: int
-    source_location: str
-    destination_location: str
-    status: str  # "PENDING", "IN_PROGRESS", "COMPLETED"
-
-
 class TaskPlanningState(TypedDict):
     """
     TypedDict state schema passed between nodes in the Task Planning LangGraph.
-    
+
     Fields:
-        order_raw: Raw natural language order text from user/ERP.
-        parsed_order: Structured representation of the order.
-        subtasks: List of decomposed atomic warehouse subtasks.
-        assigned_robot_id: ID of the allocated AMR (None if unassigned).
-        available_robots: Cached list of available robots retrieved during planning.
-        requires_escalation: Boolean flag triggering routing to human supervisor.
-        escalation_reason: Reason for escalation when no robot qualifies.
-        status: Overall planning status ("INITIALIZED", "PARSED", "DECOMPOSED", "ASSIGNED", "ESCALATED", "FAILED").
-        error_message: Optional error details.
+        order_text: Raw natural-language warehouse order from user / ERP system.
+        parsed_order: Structured dict with keys {item, quantity, source, destination}.
+        subtasks: Ordered list of atomic robot actions, each a dict with
+                  keys like {step, action, target/item/qty}.
+        available_robots: List of robot identifiers currently known to be available.
+        assigned_robot: The ID of the robot selected for this task (None until assigned).
+        status: Lifecycle tracker — one of:
+                "pending", "parsed", "decomposed", "assigned",
+                "escalated", "parse_failed", "needs_clarification",
+                "failed_no_robot".
     """
-    order_raw: str
+    order_text: str
     parsed_order: Optional[Dict[str, Any]]
-    subtasks: List[SubTask]
-    assigned_robot_id: Optional[str]
-    available_robots: List[Dict[str, Any]]
-    requires_escalation: bool
-    escalation_reason: Optional[str]
+    subtasks: Optional[List[Dict[str, Any]]]
+    available_robots: Optional[List[str]]
+    assigned_robot: Optional[str]
     status: str
-    error_message: Optional[str]

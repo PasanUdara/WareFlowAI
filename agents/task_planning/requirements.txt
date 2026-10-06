@@ -1,0 +1,16 @@
+# Task Planning Agent — Dependencies [Member 1]
+# Scoped to this agent's direct requirements.
+
+# LangGraph state-machine orchestration
+langgraph>=0.3.0
+
+# Groq LLM via the official groq SDK
+groq>=0.9.0
+
+# FastAPI for the /plan-task REST endpoint
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+
+# Testing
+pytest>=8.1.0

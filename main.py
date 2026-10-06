@@ -161,22 +161,25 @@ def dispatch_order(req: OrderDispatchRequest):
     
     # Construct initial state
     initial_state: TaskPlanningState = {
+        "order_text": req.order_text,
         "order_raw": req.order_text,
         "parsed_order": None,
         "subtasks": [],
+        "assigned_robot": None,
         "assigned_robot_id": None,
         "available_robots": available_robots,
         "requires_escalation": False,
         "escalation_reason": None,
-        "status": "INITIALIZED",
+        "status": "pending",
         "error_message": None
     }
     
     # Run LangGraph StateGraph
     result_state = task_planning_graph.invoke(initial_state)
+    assigned_id = result_state.get("assigned_robot") or result_state.get("assigned_robot_id")
     return {
         "success": True,
-        "assigned_robot_id": result_state.get("assigned_robot_id"),
+        "assigned_robot_id": assigned_id,
         "status": result_state.get("status"),
         "requires_escalation": result_state.get("requires_escalation"),
         "escalation_reason": result_state.get("escalation_reason"),

@@ -76,23 +76,28 @@ Create a local `.env` file from the provided template:
   Copy-Item .env.example .env
   ```
 
-*(Optional)*: If you want to use live LLM parsing instead of mock responses, open `.env` and add your OpenAI API key:
+*(Optional)*: If you want to use live LLM parsing, open `.env` and configure your Groq API key:
 ```ini
-OPENAI_API_KEY=sk-your-actual-api-key-here
+GROQ_API_KEY=gsk_your_groq_api_key_here
+GROQ_MODEL_NAME=openai/gpt-oss-120b
 ```
 
 #### 4. Build and Start the Services
 
-- **Standard Startup (FastAPI Gateway + Qdrant Vector DB):**
-  ```bash
-  docker compose up --build
-  ```
-- **Run in Background (Detached Mode):**
+- **Run Full Stack (Frontend + Backend + Qdrant DB):**
   ```bash
   docker compose up -d --build
   ```
+- **Run Backend Only (API Gateway + Qdrant DB):**
+  ```bash
+  docker compose up -d app qdrant
+  ```
+- **Run Frontend Only in Docker:**
+  ```bash
+  docker compose up -d frontend
+  ```
 - **Run with Live Continuous Simulation Engine:**
-  To start the continuous headless warehouse simulation loop alongside the gateway and vector database:
+  To start the continuous headless warehouse simulation loop alongside all services:
   ```bash
   docker compose --profile full up --build
   ```
@@ -102,6 +107,7 @@ Once running, the following services and endpoints are immediately available:
 
 | Service / Interface | URL | Description |
 | :--- | :--- | :--- |
+| **Frontend Web Dashboard** | [http://localhost:5173](http://localhost:5173) | Interactive React + Vite AMR Control Center |
 | **FastAPI Swagger UI** | [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive API documentation and testing interface |
 | **ReDoc API Reference** | [http://localhost:8000/redoc](http://localhost:8000/redoc) | Alternative OpenAPI documentation view |
 | **Service Health Check** | [http://localhost:8000/health](http://localhost:8000/health) | Real-time health status of agents and simulation |
