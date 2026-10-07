@@ -8,7 +8,7 @@ import time
 import logging
 from typing import Optional, Dict, Any
 import jwt
-from passlib.context import CryptContext
+import bcrypt
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -18,18 +18,24 @@ SECRET_KEY = os.getenv("JWT_SECRET_KEY", "wareflow_super_secret_jwt_key_change_i
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security_bearer = HTTPBearer(auto_error=False)
 
 
 def get_password_hash(password: str) -> str:
     """Hash raw password string using bcrypt."""
-    return pwd_context.hash(password)
+    pwd_bytes = password.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify raw password against bcrypt hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        pwd_bytes = plain_password.encode("utf-8")[:72]
+        hash_bytes = hashed_password.encode("utf-8")
+        return bcrypt.checkpw(pwd_bytes, hash_bytes)
+    except Exception:
+        return False
 
 
 # Pre-hashed passwords for demo users:
