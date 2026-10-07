@@ -10,6 +10,8 @@ jobs:
   lint-and-test:
     name: Lint and Run Tests
     runs-on: ubuntu-latest
+    env:
+      QDRANT_MODE: memory
 
     steps:
       - name: Checkout code
