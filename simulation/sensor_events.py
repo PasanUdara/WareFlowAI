@@ -3,6 +3,7 @@ Fake Sensor & Anomaly Event Generator [Member 2]
 Generates simulated hardware failures, path blockages, and low-battery events for testing agents.
 """
 
+from simulation import robot
 import random
 from typing import Dict, Any, Optional
 from .robot import Robot, RobotState
@@ -24,9 +25,14 @@ class SensorEventGenerator:
         Returns:
             Anomaly event dict if injected, else None.
         """
-        # Manual injection helper or probabilistic trigger
-        # TODO: [Member 2] Add controllable triggers via API / dashboard buttons
-        return None
+        if random.random() > self.anomaly_probability:
+            return None
+
+        if robot.battery > 20.0:
+            return self.trigger_stuck(robot)
+
+        return self.trigger_low_battery(robot, battery_level=10.0)
+
 
     def trigger_stuck(self, robot: Robot) -> Dict[str, Any]:
         """Force a robot into a STUCK condition."""
@@ -36,8 +42,11 @@ class SensorEventGenerator:
             "event_type": "ROBOT_STUCK",
             "robot_id": robot.robot_id,
             "position": robot.position,
-            "severity": "HIGH"
-        }
+            "state": robot.state.value,
+            "stuck_duration": robot.stuck_duration,
+            "battery": robot.battery,
+         "severity": "HIGH"
+}
 
     def trigger_low_battery(self, robot: Robot, battery_level: float = 10.0) -> Dict[str, Any]:
         """Force a robot to critically low battery."""
