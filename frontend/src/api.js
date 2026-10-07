@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 export function getAuthToken() {
   return localStorage.getItem('wareflow_token') || '';
@@ -131,3 +131,18 @@ export async function fetchEventHistory(limit = 30) {
   });
   return handleResponse(response);
 }
+
+export async function sendMCPMessage(method, params = {}) {
+  const response = await fetch(`${API_BASE}/api/v1/mcp/rpc`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: String(Date.now()),
+      method,
+      params
+    })
+  });
+  return handleResponse(response);
+}
+

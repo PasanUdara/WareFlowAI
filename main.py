@@ -22,7 +22,7 @@ from simulation.environment import WarehouseEnvironment
 from simulation.robot import RobotState
 
 # Communication & Security Imports [Member 4]
-from communication import get_event_bus, AgentMessageEnvelope, EventType, MessagePriority
+from communication import get_event_bus, AgentMessageEnvelope, EventType, MessagePriority, MCPMessage
 from security import (
     sanitize_user_input,
     create_access_token,
@@ -137,13 +137,16 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+cors_origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173").split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 # --- Data Models ---
@@ -525,9 +528,60 @@ async def websocket_telemetry(websocket: WebSocket):
             active_telemetry_clients.remove(websocket)
 
 
+@app.post("/api/v1/mcp/rpc", summary="MCP (Model Context Protocol) JSON-RPC 2.0 Agent Gateway")
+async def mcp_rpc_gateway(msg: MCPMessage):
+    """
+    Model Context Protocol (MCP) HTTP interface allowing agents to execute cross-module tools.
+    Supports methods: tools/call, tools/list, agent/dispatch, agent/verify, agent/reroute.
+    """
+    method = msg.method or ""
+    params = msg.params or {}
+
+    if method == "tools/list":
+        return MCPMessage(
+            id=msg.id,
+            result={
+                "tools": [
+                    {"name": "task_planner.dispatch", "description": "Dispatch natural language order to Task Planner agent"},
+                    {"name": "compliance.check", "description": "Verify operation parameters against Qdrant SOP rules"},
+                    {"name": "exception.reroute", "description": "Request A* detour reroute for a blocked AMR"},
+                    {"name": "fleet.telemetry", "description": "Get current 2D telemetry for all AMRs"}
+                ]
+            }
+        )
+
+    if method in ("tools/call", "agent/dispatch", "task_planner.dispatch"):
+        tool_name = params.get("name") or method
+        if tool_name in ("task_planner.dispatch", "agent/dispatch"):
+            order_text = params.get("arguments", {}).get("order_text") or params.get("order_text", "")
+            res = await dispatch_order(OrderDispatchRequest(order_text=order_text), current_user={"sub": "mcp_agent"})
+            return MCPMessage(id=msg.id, result=res)
+
+        if tool_name in ("compliance.check", "agent/verify"):
+            args = params.get("arguments") or params
+            res = compliance_agent.check_compliance(args)
+            return MCPMessage(id=msg.id, result=res)
+
+        if tool_name in ("exception.reroute", "agent/reroute"):
+            robot_id = params.get("arguments", {}).get("robot_id") or params.get("robot_id")
+            goal_x = params.get("arguments", {}).get("goal_x", 0)
+            goal_y = params.get("arguments", {}).get("goal_y", 0)
+            path = sim_env.reroute_robot(robot_id=robot_id, goal=(goal_x, goal_y))
+            return MCPMessage(id=msg.id, result={"robot_id": robot_id, "rerouted_path": path})
+
+        if tool_name in ("fleet.telemetry", "agent/telemetry"):
+            return MCPMessage(id=msg.id, result={"robots": sim_env.get_fleet_telemetry()})
+
+    return MCPMessage(
+        id=msg.id,
+        error={"code": -32601, "message": f"Method or tool '{method}' not recognized"}
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", 8000))
     debug = os.getenv("DEBUG", "True").lower() in ("true", "1")
     uvicorn.run("main:app", host=host, port=port, reload=debug)
+

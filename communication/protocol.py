@@ -52,3 +52,16 @@ class AgentMessageEnvelope(BaseModel):
 
     class Config:
         use_enum_values = True
+
+
+class MCPMessage(BaseModel):
+    """
+    Model Context Protocol (MCP) / JSON-RPC 2.0 message envelope for agent inter-tool communication.
+    """
+    jsonrpc: str = Field("2.0", description="MCP / JSON-RPC version specifier")
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()))
+    method: Optional[str] = Field(None, description="MCP method or tool identifier", example="tools/call")
+    params: Dict[str, Any] = Field(default_factory=dict, description="Tool invocation parameters")
+    result: Optional[Dict[str, Any]] = Field(None, description="MCP execution output payload")
+    error: Optional[Dict[str, Any]] = Field(None, description="Structured MCP error output")
+

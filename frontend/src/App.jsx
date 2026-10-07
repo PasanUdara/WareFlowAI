@@ -93,7 +93,8 @@ function App() {
 
     const connectWebSocket = () => {
       try {
-        socket = new WebSocket('ws://localhost:8000/ws/telemetry');
+        const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/telemetry';
+        socket = new WebSocket(wsUrl);
         wsRef.current = socket;
 
         socket.onopen = () => {
