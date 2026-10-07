@@ -45,9 +45,11 @@ async def telemetry_background_loop():
         try:
             if not is_emergency_stopped:
                 anomalies = sim_env.tick(delta_time=interval)
-                # If anomalies occur, feed to exception handling agent
+                # If anomalies occur, feed to exception handling agent and execute recovery
                 for anomaly in anomalies:
-                    exception_agent.process_telemetry_event(anomaly)
+                    recovery_action = exception_agent.process_telemetry_event(anomaly)
+                    if recovery_action:
+                        sim_env.execute_recovery(recovery_action)
             
             telemetry = sim_env.get_fleet_telemetry()
             payload = {
@@ -189,7 +191,7 @@ def dispatch_order(req: OrderDispatchRequest):
 
 
 @app.get("/api/v1/fleet/status", summary="Get fleet telemetry")
-def get_fleet_status():
+async def get_fleet_status():
     """Return live coordinates, battery level, and states for all AMRs."""
     return {
         "timestamp": asyncio.get_event_loop().time(),

@@ -33,6 +33,7 @@ class Robot:
         self.payload_cap_kg = payload_cap_kg
         self.state = RobotState.IDLE
         self.waypoints: List[Tuple[int, int]] = []
+        self.destination: Optional[Tuple[int, int]] = None
         self.current_task_id: Optional[str] = None
         self.speed_ms = 1.0
         self.stuck_duration = 0.0
@@ -42,6 +43,9 @@ class Robot:
         return {
             "robot_id": self.robot_id,
             "position": self.position,
+            "x": self.position[0],
+            "y": self.position[1],
+            "destination": self.destination,
             "battery": round(self.battery, 1),
             "state": self.state.value,
             "speed_ms": self.speed_ms,

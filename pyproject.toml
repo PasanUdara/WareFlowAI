@@ -17,6 +17,7 @@ minversion = "7.0"
 addopts = "-ra -q --import-mode=importlib"
 testpaths = [
     "tests",
+    "simulation/tests",
     "agents/task_planning/tests",
     "agents/exception_handling/tests",
     "agents/knowledge_compliance/tests",
