@@ -11,6 +11,12 @@ jobs:
     name: Lint and Run Tests
     runs-on: ubuntu-latest
 
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
