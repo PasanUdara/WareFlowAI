@@ -43,12 +43,18 @@ def test_rules_checker_approves_compliant_task():
     assert len(violations) == 0
 
 
-def test_rag_engine_mock_search():
+def test_rag_engine_search():
     rag = RAGEngine()
     results = rag.search_sops("hazmat speed limits", top_k=2)
+
     assert len(results) == 2
     assert "section_title" in results[0]
-    assert "SOP-HAZ-002" in results[0]["section_title"]
+    assert "content" in results[0]
+    assert "sop_id" in results[0]
+    assert any(
+        result["section_title"] == "2. Speed Limits for Hazmat Payloads"
+        for result in results
+    )
 
 
 def test_knowledge_compliance_agent_full_check():

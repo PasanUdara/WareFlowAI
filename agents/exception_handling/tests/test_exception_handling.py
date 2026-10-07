@@ -41,18 +41,24 @@ def test_recovery_engine_routes_to_charger_on_low_battery():
         "robot_id": "R1",
         "severity": "CRITICAL"
     }
-    action = engine.decide_action(anomaly)
-    assert action["action"] == "RETURN_TO_CHARGER"
-    assert action["escalate_human"] is False
 
+    action = engine.decide_action(anomaly)
+
+    assert action["action_type"] == "RETURN_TO_CHARGER"
+    assert action["robot_id"] == "R1"
+    assert action["waypoints"] == []
 
 def test_exception_handling_agent_flow():
     agent = ExceptionHandlingAgent()
+
     telemetry = {
         "robot_id": "R3",
         "battery": 8.0,
         "state": "MOVING"
     }
+
     action = agent.process_telemetry_event(telemetry)
+
     assert action is not None
-    assert action["action"] == "RETURN_TO_CHARGER"
+    assert action["action_type"] == "RETURN_TO_CHARGER"
+    assert action["robot_id"] == "R3"

@@ -25,29 +25,50 @@ class Robot:
         robot_id: str,
         start_pos: Tuple[int, int] = (0, 0),
         battery: float = 100.0,
-        payload_cap_kg: float = 50.0
+        payload_cap_kg: float = 50.0,
+        name: Optional[str] = None,
+        model: str = "AMR",
+        capabilities: Optional[List[str]] = None,
+        enabled: bool = True
     ):
         self.robot_id = robot_id
+        self.name = name or f"Warehouse Robot {robot_id.replace('AMR-', '').replace('R', '')}"
+        self.model = model
+        self.capabilities = capabilities if capabilities is not None else ["transport", "pallet"]
+        self.enabled = enabled
+        from datetime import datetime, timezone
+        self.created_at = datetime.now(timezone.utc).isoformat()
+        
         self.position = start_pos
         self.battery = battery
         self.payload_cap_kg = payload_cap_kg
         self.state = RobotState.IDLE
         self.waypoints: List[Tuple[int, int]] = []
+        self.destination: Optional[Tuple[int, int]] = None
         self.current_task_id: Optional[str] = None
         self.speed_ms = 1.0
         self.stuck_duration = 0.0
         
     def to_telemetry(self) -> Dict[str, Any]:
-        """Serialize current state into telemetry dictionary."""
+        """Serialize current state into normalized telemetry dictionary."""
+        pos = list(self.position) if isinstance(self.position, (list, tuple)) else [0, 0]
+        x_val, y_val = pos[0] if len(pos) > 0 else 0, pos[1] if len(pos) > 1 else 0
         return {
             "robot_id": self.robot_id,
-            "position": self.position,
-            "x": self.position[0] if self.position else 0,
-            "y": self.position[1] if self.position else 0,
+            "name": self.name,
+            "model": self.model,
+            "x": x_val,
+            "y": y_val,
+            "position": [x_val, y_val],
+            "destination": self.destination,
             "battery": round(self.battery, 1),
-            "state": self.state.value,
+            "state": self.state.value if hasattr(self.state, "value") else str(self.state),
             "speed_ms": self.speed_ms,
+            "current_task": self.current_task_id,
             "current_task_id": self.current_task_id,
+            "capabilities": self.capabilities,
+            "enabled": self.enabled,
+            "created_at": self.created_at,
             "stuck_duration": self.stuck_duration,
             "waypoints_remaining": len(self.waypoints)
         }

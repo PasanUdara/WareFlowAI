@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from groq import Groq
 
@@ -33,12 +33,28 @@ def _sanitize_order_text(raw: str) -> str:
     return sanitized
 
 
+def _fallback_regex_parse(order_text: str) -> Optional[Dict[str, Any]]:
+    """Simple regex fallback parser for standard warehouse order patterns when LLM is unavailable."""
+    pattern = r"^(?:move|pick|fetch|transport|carry|shift|transfer)\s+(?:(\d+)\s+)?(.+?)\s+from\s+(.+?)\s+to\s+(.+)$"
+    match = re.search(pattern, order_text, re.IGNORECASE)
+    if match:
+        qty_str, item, source, dest = match.groups()
+        quantity = int(qty_str) if qty_str else 1
+        return {
+            "item": item.strip(),
+            "quantity": quantity,
+            "source": source.strip(),
+            "destination": dest.strip().rstrip(".")
+        }
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Node function
 # ---------------------------------------------------------------------------
 def parse_order(state: TaskPlanningState) -> Dict[str, Any]:
     """
-    Parse natural-language order text into a structured dict via Gemini.
+    Parse natural-language order text into a structured dict via Gemini/Groq LLM or regex fallback.
 
     On success  → sets parsed_order and status="parsed".
     On failure  → sets status="parse_failed" (handled by clarify_order downstream).
@@ -55,6 +71,10 @@ def parse_order(state: TaskPlanningState) -> Dict[str, Any]:
     try:
         api_key = os.environ.get("GROQ_API_KEY", "")
         if not api_key:
+            fallback = _fallback_regex_parse(order_text)
+            if fallback:
+                logger.info("GROQ_API_KEY not set; parsed order via regex fallback: %s", fallback)
+                return {"parsed_order": fallback, "status": "parsed"}
             raise EnvironmentError("GROQ_API_KEY environment variable is not set")
 
         model_name = os.environ.get("GROQ_MODEL_NAME", "openai/gpt-oss-120b")
@@ -77,14 +97,24 @@ def parse_order(state: TaskPlanningState) -> Dict[str, Any]:
         if not required_keys.issubset(parsed.keys()):
             missing = required_keys - set(parsed.keys())
             logger.error("Groq response missing keys: %s", missing)
+            fallback = _fallback_regex_parse(order_text)
+            if fallback:
+                return {"parsed_order": fallback, "status": "parsed"}
             return {"parsed_order": None, "status": "parse_failed"}
 
         logger.info("Order parsed successfully: %s", parsed)
         return {"parsed_order": parsed, "status": "parsed"}
 
     except json.JSONDecodeError as exc:
-        logger.error("JSONDecodeError while parsing Gemini response: %s", exc)
+        logger.error("JSONDecodeError while parsing response: %s", exc)
+        fallback = _fallback_regex_parse(order_text)
+        if fallback:
+            return {"parsed_order": fallback, "status": "parsed"}
         return {"parsed_order": None, "status": "parse_failed"}
     except Exception as exc:
         logger.error("Unexpected error in parse_order: %s", exc)
+        fallback = _fallback_regex_parse(order_text)
+        if fallback:
+            logger.info("Parsed order via fallback regex after LLM error: %s", fallback)
+            return {"parsed_order": fallback, "status": "parsed"}
         return {"parsed_order": None, "status": "parse_failed"}

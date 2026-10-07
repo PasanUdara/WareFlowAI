@@ -65,3 +65,8 @@ data/vector_store/*
 *.log
 scratch/
 temp/
+
+# Qdrant local runtime
+.qdrant-initialized
+qdrant_bin/
+storage/
