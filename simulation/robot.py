@@ -49,29 +49,29 @@ class Robot:
         self.speed_ms = 1.0
         self.stuck_duration = 0.0
         
-   def to_telemetry(self) -> Dict[str, Any]:
-    """Serialize current state into normalized telemetry dictionary."""
-    pos = list(self.position) if isinstance(self.position, (list, tuple)) else [0, 0]
-    x_val, y_val = pos[0] if len(pos) > 0 else 0, pos[1] if len(pos) > 1 else 0
-    return {
-        "robot_id": self.robot_id,
-        "name": self.name,
-        "model": self.model,
-        "x": x_val,
-        "y": y_val,
-        "position": [x_val, y_val],
-        "destination": self.destination,
-        "battery": round(self.battery, 1),
-        "state": self.state.value if hasattr(self.state, "value") else str(self.state),
-        "speed_ms": self.speed_ms,
-        "current_task": self.current_task_id,
-        "current_task_id": self.current_task_id,
-        "capabilities": self.capabilities,
-        "enabled": self.enabled,
-        "created_at": self.created_at,
-        "stuck_duration": self.stuck_duration,
-        "waypoints_remaining": len(self.waypoints)
-    }
+    def to_telemetry(self) -> Dict[str, Any]:
+        """Serialize current state into normalized telemetry dictionary."""
+        pos = list(self.position) if isinstance(self.position, (list, tuple)) else [0, 0]
+        x_val, y_val = pos[0] if len(pos) > 0 else 0, pos[1] if len(pos) > 1 else 0
+        return {
+            "robot_id": self.robot_id,
+            "name": self.name,
+            "model": self.model,
+            "x": x_val,
+            "y": y_val,
+            "position": [x_val, y_val],
+            "destination": self.destination,
+            "battery": round(self.battery, 1),
+            "state": self.state.value if hasattr(self.state, "value") else str(self.state),
+            "speed_ms": self.speed_ms,
+            "current_task": self.current_task_id,
+            "current_task_id": self.current_task_id,
+            "capabilities": self.capabilities,
+            "enabled": self.enabled,
+            "created_at": self.created_at,
+            "stuck_duration": self.stuck_duration,
+            "waypoints_remaining": len(self.waypoints)
+        }
 
     def tick(self, delta_time: float = 0.5):
         """Advance robot physics, position, and battery consumption."""
