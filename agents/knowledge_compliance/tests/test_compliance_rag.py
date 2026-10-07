@@ -69,3 +69,48 @@ def test_knowledge_compliance_agent_full_check():
     assert result["is_compliant"] is False
     assert len(result["violations"]) > 0
     assert len(result["sop_citations"]) > 0
+
+
+def test_rules_checker_accepts_compatibility_parameter_names():
+    checker = RulesChecker()
+
+    task = {
+        "payload_weight": 30.0,
+        "speed": 0.5,
+        "is_hazmat": False
+    }
+
+    violations = checker.evaluate(task)
+
+    assert len(violations) == 0
+
+
+def test_rules_checker_rejects_low_battery_task():
+    checker = RulesChecker()
+
+    task = {
+        "payload_weight": 30.0,
+        "speed": 0.5,
+        "is_hazmat": False,
+        "battery_level": 10.0
+    }
+
+    violations = checker.evaluate(task)
+
+    assert any("Battery level 10.0%" in v for v in violations)
+    assert any("15.0%" in v for v in violations)
+
+
+def test_rules_checker_allows_task_with_sufficient_battery():
+    checker = RulesChecker()
+
+    task = {
+        "payload_weight": 30.0,
+        "speed": 0.5,
+        "is_hazmat": False,
+        "battery_level": 50.0
+    }
+
+    violations = checker.evaluate(task)
+
+    assert not any("Battery" in v for v in violations)
