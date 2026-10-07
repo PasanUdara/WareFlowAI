@@ -42,6 +42,8 @@ class Robot:
         return {
             "robot_id": self.robot_id,
             "position": self.position,
+            "x": self.position[0] if self.position else 0,
+            "y": self.position[1] if self.position else 0,
             "battery": round(self.battery, 1),
             "state": self.state.value,
             "speed_ms": self.speed_ms,

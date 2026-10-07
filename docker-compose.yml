@@ -24,6 +24,8 @@ services:
     depends_on:
       qdrant:
         condition: service_healthy
+    volumes:
+      - .:/app
     restart: unless-stopped
     networks:
       - wareflow_net
@@ -55,6 +57,9 @@ services:
     container_name: wareflow_frontend
     ports:
       - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
     depends_on:
       - app
     restart: unless-stopped

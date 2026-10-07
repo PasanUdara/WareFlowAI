@@ -189,10 +189,11 @@ def dispatch_order(req: OrderDispatchRequest):
 
 
 @app.get("/api/v1/fleet/status", summary="Get fleet telemetry")
-def get_fleet_status():
+async def get_fleet_status():
     """Return live coordinates, battery level, and states for all AMRs."""
+    import time
     return {
-        "timestamp": asyncio.get_event_loop().time(),
+        "timestamp": time.time(),
         "emergency_stop": is_emergency_stopped,
         "robots": sim_env.get_fleet_telemetry()
     }
