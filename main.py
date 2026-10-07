@@ -79,6 +79,11 @@ async def telemetry_background_loop():
                             payload=recovery_decision,
                             priority=MessagePriority.HIGH
                         ))
+                # If anomalies occur, feed to exception handling agent and execute recovery
+                for anomaly in anomalies:
+                    recovery_action = exception_agent.process_telemetry_event(anomaly)
+                    if recovery_action:
+                        sim_env.execute_recovery(recovery_action)
             
             telemetry = sim_env.get_fleet_telemetry()
             
