@@ -2,10 +2,10 @@
 Warehouse Simulation Environment [Member 2]
 Coordinates the 2D grid, AMR fleet lifecycle, and telemetry tick loop.
 """
-
+from agents.exception_handling.logic.rerouter import Rerouter
 from typing import Dict, List, Any
 from .grid import WarehouseGrid
-from .robot import Robot
+from .robot import Robot, RobotState
 from .sensor_events import SensorEventGenerator
 
 
@@ -30,7 +30,46 @@ class WarehouseEnvironment:
                 battery=100.0,
                 payload_cap_kg=50.0
             )
+    def reroute_robot(
+        self,
+        robot_id: str,
+        goal: tuple[int, int]
+    ) -> List[tuple[int, int]]:
+        """
+        Calculate and apply an alternate A* route for a robot.
 
+        Args:
+            robot_id: ID of the robot that needs rerouting.
+            goal: Intended destination on the warehouse grid.
+
+        Returns:
+            Calculated waypoint path. Returns an empty list if
+            the robot does not exist or no valid path is available.
+        """
+        robot = self.robots.get(robot_id)
+
+        if robot is None:
+            return []
+
+        rerouter = Rerouter()
+
+        path = rerouter.calculate_detour(
+            start=robot.position,
+            goal=goal,
+            blocked_cells=self.grid.blocked_cells,
+            grid_bounds=(self.grid.width, self.grid.height)
+        )
+
+        if not path:
+            return []
+
+        # Current position is already occupied by the robot.
+        # Only future positions become movement waypoints.
+        robot.waypoints = path[1:]
+        robot.state = RobotState.MOVING
+        robot.stuck_duration = 0.0
+
+        return path
     def get_fleet_telemetry(self) -> List[Dict[str, Any]]:
         """Return array of all robot telemetry packets."""
         return [robot.to_telemetry() for robot in self.robots.values()]

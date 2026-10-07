@@ -56,3 +56,18 @@ def test_rerouter_returns_empty_when_no_path():
     )
 
     assert path == []
+def test_rerouter_returns_waypoints_for_recovery():
+    rerouter = Rerouter()
+
+    path = rerouter.calculate_detour(
+        start=(1, 1),
+        goal=(5, 1),
+        blocked_cells={(2, 1)},
+        grid_bounds=(10, 10)
+    )
+
+    assert isinstance(path, list)
+    assert len(path) > 0
+    assert path[0] == (1, 1)
+    assert path[-1] == (5, 1)
+    assert not any(position == (2, 1) for position in path)

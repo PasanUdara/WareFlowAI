@@ -1,6 +1,7 @@
 """
 Telemetry Monitor [Member 2]
-Inspects simulated robot sensor events to detect anomalies like stuck wheels or critical battery.
+Inspects robot telemetry and detects anomalies such as
+critical battery, robot stuck, blocked path, or motor stall.
 """
 
 from typing import Dict, Any, Optional
@@ -14,35 +15,78 @@ class TelemetryMonitor:
 
     def check_for_anomaly(self, telemetry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Evaluate telemetry for threshold breaches.
-        
-        Args:
-            telemetry: Dictionary containing 'robot_id', 'battery', 'state', 'stuck_duration', etc.
-            
-        Returns:
-            Anomaly dictionary if detected, else None.
+        Evaluate telemetry for anomaly conditions.
+
+        Supports both the documented telemetry contract and
+        the current simulation field names.
+
+        Documented fields:
+            robot_id
+            event_type
+            current_position
+            battery_level
+            severity
+
+        Current simulation fields:
+            robot_id
+            position
+            battery
+            state
+            stuck_duration
         """
+
         robot_id = telemetry.get("robot_id", "UNKNOWN")
-        battery = telemetry.get("battery", 100.0)
+
+        # Support documented field name and current simulation field name.
+        battery = telemetry.get(
+            "battery_level",
+            telemetry.get("battery", 100.0)
+        )
+
+        current_position = telemetry.get(
+            "current_position",
+            telemetry.get("position", (0, 0))
+        )
+
+        event_type = telemetry.get("event_type")
         state = telemetry.get("state", "IDLE")
         stuck_duration = telemetry.get("stuck_duration", 0.0)
-        
-        # Check critical battery
+
+        # Critical battery
         if battery < self.BATTERY_CRITICAL_THRESHOLD:
             return {
                 "anomaly_type": "LOW_BATTERY",
                 "robot_id": robot_id,
                 "battery": battery,
+                "position": current_position,
                 "severity": "CRITICAL"
             }
-            
-        # Check if robot is stuck
-        if state == "STUCK" or stuck_duration > self.STALL_TIMEOUT_SECONDS:
+
+        # Robot stuck
+        if event_type == "ROBOT_STUCK" or state == "STUCK" or stuck_duration > self.STALL_TIMEOUT_SECONDS:
             return {
                 "anomaly_type": "ROBOT_STUCK",
                 "robot_id": robot_id,
-                "position": telemetry.get("position", (0, 0)),
-                "severity": "HIGH"
+                "position": current_position,
+                "severity": telemetry.get("severity", "HIGH")
             }
-            
+
+        # Path blocked
+        if event_type == "PATH_BLOCKED":
+            return {
+                "anomaly_type": "PATH_BLOCKED",
+                "robot_id": robot_id,
+                "position": current_position,
+                "severity": telemetry.get("severity", "HIGH")
+            }
+
+        # Motor stall
+        if event_type == "MOTOR_STALL":
+            return {
+                "anomaly_type": "MOTOR_STALL",
+                "robot_id": robot_id,
+                "position": current_position,
+                "severity": telemetry.get("severity", "CRITICAL")
+            }
+
         return None
