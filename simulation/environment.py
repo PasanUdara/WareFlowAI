@@ -147,15 +147,116 @@ class WarehouseEnvironment:
         """Return array of all robot telemetry packets."""
         return [robot.to_telemetry() for robot in self.robots.values()]
 
+    def get_available_robots(self) -> List[Dict[str, Any]]:
+        """Return array of enabled available robots for task assignment."""
+        return [
+            robot.to_telemetry() for robot in self.robots.values()
+            if robot.enabled and robot.state != RobotState.ERROR
+        ]
+
+    def get_robot(self, robot_id: str) -> Optional[Robot]:
+        """Get single Robot instance by ID."""
+        return self.robots.get(robot_id)
+
+    def add_robot(
+        self,
+        robot_id: str,
+        name: Optional[str] = None,
+        model: str = "AMR",
+        capabilities: Optional[List[str]] = None,
+        initial_position: Optional[List[int]] = None,
+        battery: float = 100.0
+    ) -> Robot:
+        """
+        Dynamically register a new AMR in the fleet and simulation runtime.
+        """
+        if not robot_id or not str(robot_id).strip():
+            raise ValueError("Robot ID cannot be empty.")
+        
+        robot_id = str(robot_id).strip()
+        if robot_id in self.robots:
+            raise ValueError(f"Robot with ID '{robot_id}' already exists.")
+
+        if battery < 0.0 or battery > 100.0:
+            raise ValueError("Battery must be between 0.0 and 100.0.")
+
+        pos = (0, 0)
+        if initial_position:
+            if len(initial_position) != 2:
+                raise ValueError("Initial position must be an [x, y] coordinate array.")
+            x, y = initial_position[0], initial_position[1]
+            if x < 0 or x >= self.grid.width or y < 0 or y >= self.grid.height:
+                raise ValueError(f"Position [{x}, {y}] is outside grid bounds ({self.grid.width}x{self.grid.height}).")
+            pos = (x, y)
+        else:
+            charging_coords = list(self.grid.charging_stations)
+            pos = charging_coords[len(self.robots) % len(charging_coords)]
+
+        robot_name = name.strip() if name and name.strip() else f"Warehouse Robot {robot_id}"
+
+        new_robot = Robot(
+            robot_id=robot_id,
+            start_pos=pos,
+            battery=battery,
+            name=robot_name,
+            model=model or "AMR",
+            capabilities=capabilities or ["transport", "pallet"],
+            enabled=True
+        )
+        self.robots[robot_id] = new_robot
+        return new_robot
+
+    def update_robot(
+        self,
+        robot_id: str,
+        name: Optional[str] = None,
+        capabilities: Optional[List[str]] = None,
+        enabled: Optional[bool] = None
+    ) -> Robot:
+        """Safely update non-simulation metadata fields of an existing robot."""
+        robot = self.get_robot(robot_id)
+        if not robot:
+            raise ValueError(f"Robot '{robot_id}' not found.")
+
+        if name is not None:
+            if not name.strip():
+                raise ValueError("Robot name cannot be empty.")
+            robot.name = name.strip()
+
+        if capabilities is not None:
+            robot.capabilities = capabilities
+
+        if enabled is not None:
+            self.set_robot_enabled(robot_id, enabled)
+
+        return robot
+
+    def set_robot_enabled(self, robot_id: str, enabled: bool) -> Robot:
+        """Enable or disable a robot safely."""
+        robot = self.get_robot(robot_id)
+        if not robot:
+            raise ValueError(f"Robot '{robot_id}' not found.")
+
+        if not enabled and robot.state in (RobotState.MOVING, RobotState.PICKING):
+            raise ValueError(f"Cannot disable robot '{robot_id}' while executing task in state '{robot.state.value}'.")
+
+        robot.enabled = enabled
+        return robot
+
     def tick(self, delta_time: float = 0.5) -> List[Dict[str, Any]]:
         """
-        Advance one simulation time step.
+        Advance one simulation time step for all enabled robots.
         
         Returns:
             List of any anomaly events triggered during this tick.
         """
         anomalies = []
         for robot in self.robots.values():
+            if robot.enabled:
+                robot.tick(delta_time)
+                anomaly = self.sensor_generator.maybe_inject_anomaly(robot)
+                if anomaly:
+                    anomalies.append(anomaly)
             robot.tick(delta_time)
             # If robot reached a charging dock and is idle, begin charging
             if (
