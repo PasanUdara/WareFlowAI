@@ -107,6 +107,9 @@ class WarehouseEnvironment:
                 action["waypoints"] = path[1:] if len(path) > 1 else path
             else:
                 logger.warning("Reroute requested for %s but no existing goal/destination available.", robot_id)
+                if robot.state == RobotState.STUCK:
+                    robot.state = RobotState.IDLE
+                    robot.stuck_duration = 0.0
             return action
 
         elif action_type == "RETURN_TO_CHARGER":
@@ -254,19 +257,15 @@ class WarehouseEnvironment:
         for robot in self.robots.values():
             if robot.enabled:
                 robot.tick(delta_time)
+                # If robot reached a charging dock and is idle, begin charging
+                if (
+                    robot.state == RobotState.IDLE
+                    and robot.destination in self.grid.charging_stations
+                    and robot.position == robot.destination
+                    and robot.battery < 99.0
+                ):
+                    robot.state = RobotState.CHARGING
                 anomaly = self.sensor_generator.maybe_inject_anomaly(robot)
                 if anomaly:
                     anomalies.append(anomaly)
-            robot.tick(delta_time)
-            # If robot reached a charging dock and is idle, begin charging
-            if (
-                robot.state == RobotState.IDLE
-                and robot.destination in self.grid.charging_stations
-                and robot.position == robot.destination
-                and robot.battery < 99.0
-            ):
-                robot.state = RobotState.CHARGING
-            anomaly = self.sensor_generator.maybe_inject_anomaly(robot)
-            if anomaly:
-                anomalies.append(anomaly)
         return anomalies

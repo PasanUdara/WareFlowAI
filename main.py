@@ -5,6 +5,7 @@ and inter-agent event bus communication.
 """
 
 import os
+import time
 import asyncio
 import logging
 from typing import Dict, Any, Optional, List
@@ -60,7 +61,7 @@ async def telemetry_background_loop():
         try:
             if not is_emergency_stopped:
                 anomalies = sim_env.tick(delta_time=interval)
-                # If anomalies occur, feed to exception handling agent and publish events
+                # If anomalies occur, feed to exception handling agent, publish events, and execute recovery
                 for anomaly in anomalies:
                     await event_bus.publish(AgentMessageEnvelope(
                         source="simulation",
@@ -79,11 +80,7 @@ async def telemetry_background_loop():
                             payload=recovery_decision,
                             priority=MessagePriority.HIGH
                         ))
-                # If anomalies occur, feed to exception handling agent and execute recovery
-                for anomaly in anomalies:
-                    recovery_action = exception_agent.process_telemetry_event(anomaly)
-                    if recovery_action:
-                        sim_env.execute_recovery(recovery_action)
+                        sim_env.execute_recovery(recovery_decision)
             
             telemetry = sim_env.get_fleet_telemetry()
             
@@ -350,7 +347,7 @@ async def dispatch_order(req: OrderDispatchRequest, current_user: Dict[str, Any]
 def get_fleet_status(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Return live coordinates, battery level, and states for all AMRs."""
     return {
-        "timestamp": asyncio.get_event_loop().time(),
+        "timestamp": time.time(),
         "emergency_stop": is_emergency_stopped,
         "robots": sim_env.get_fleet_telemetry()
     }

@@ -12,7 +12,10 @@ from .robot import Robot, RobotState
 class SensorEventGenerator:
     """Injects synthetic sensor faults and telemetry anomalies."""
 
-    def __init__(self, anomaly_probability: float = 0.05):
+    def __init__(self, anomaly_probability: Optional[float] = None):
+        if anomaly_probability is None:
+            import os
+            anomaly_probability = float(os.getenv("ANOMALY_PROBABILITY", "0.0"))
         self.anomaly_probability = anomaly_probability
 
     def maybe_inject_anomaly(self, robot: Robot) -> Optional[Dict[str, Any]]:
@@ -25,13 +28,17 @@ class SensorEventGenerator:
         Returns:
             Anomaly event dict if injected, else None.
         """
-        if random.random() > self.anomaly_probability:
+        if self.anomaly_probability <= 0.0 or random.random() > self.anomaly_probability:
             return None
 
-        if robot.battery > 20.0:
+        if robot.battery <= 20.0:
+            return self.trigger_low_battery(robot, battery_level=10.0)
+
+        # Only inject stuck state if robot is active/moving or has waypoints/destination
+        if robot.state == RobotState.MOVING or robot.destination is not None or len(robot.waypoints) > 0:
             return self.trigger_stuck(robot)
 
-        return self.trigger_low_battery(robot, battery_level=10.0)
+        return None
 
 
     def trigger_stuck(self, robot: Robot) -> Dict[str, Any]:
