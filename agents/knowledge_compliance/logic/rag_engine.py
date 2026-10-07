@@ -6,7 +6,9 @@ using FastEmbed for local embeddings and Qdrant for vector storage.
 """
 
 from typing import List, Dict, Any
+import logging
 import os
+from pathlib import Path
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
@@ -35,16 +37,40 @@ class RAGEngine:
             or os.getenv("QDRANT_COLLECTION_NAME", "warehouse_sops")
         )
 
-        self._qdrant_client = QdrantClient(
-            host=self.host,
-            port=self.port,
-        )
+        self._qdrant_client = self._create_client()
 
         self._embedding_model = TextEmbedding(
             model_name=self.EMBEDDING_MODEL
         )
 
         self._ensure_collection()
+
+    def _create_client(self) -> QdrantClient:
+        """Create and return a QdrantClient instance based on QDRANT_MODE environment configuration."""
+        mode = os.getenv("QDRANT_MODE", "auto").lower().strip()
+        logger = logging.getLogger("wareflow.rag")
+
+        if mode == "memory":
+            return QdrantClient(":memory:")
+        elif mode == "server":
+            client = QdrantClient(host=self.host, port=self.port)
+            client.get_collections()
+            return client
+        else:
+            try:
+                client = QdrantClient(
+                    host=self.host,
+                    port=self.port,
+                    timeout=3
+                )
+                client.get_collections()
+                return client
+            except Exception as e:
+                logger.warning(
+                    "Failed to connect to Qdrant server at %s:%s (%s). Falling back to in-memory instance.",
+                    self.host, self.port, e
+                )
+                return QdrantClient(":memory:")
 
     def _ensure_collection(self) -> None:
         """Create the Qdrant collection if it does not exist."""
@@ -64,6 +90,25 @@ class RAGEngine:
                     distance=Distance.COSINE,
                 ),
             )
+
+        self._auto_index_if_empty()
+
+    def _auto_index_if_empty(self) -> None:
+        """Automatically load and index SOP markdown documents if the Qdrant collection is empty."""
+        try:
+            count = self._qdrant_client.count(self.collection_name).count
+            if count > 0:
+                return
+        except Exception:
+            pass
+
+        from .ingestion import SOPIngestor
+
+        sops_dir = Path(__file__).resolve().parents[3] / "data" / "sop_documents"
+        ingestor = SOPIngestor(sops_dir=str(sops_dir))
+        chunks = ingestor.prepare_chunks()
+        if chunks:
+            self.index_chunks(chunks)
 
     def index_chunks(
         self,

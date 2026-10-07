@@ -11,6 +11,7 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - DEBUG=True
+      - QDRANT_MODE=server
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - QDRANT_COLLECTION_NAME=warehouse_sops
