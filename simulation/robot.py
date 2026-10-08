@@ -82,11 +82,12 @@ class Robot:
 
     def tick(self, delta_time: float = 0.5):
         """Advance robot physics, position, and battery consumption."""
-        if self.state == RobotState.MOVING and self.waypoints:
-            self.position = self.waypoints.pop(0)
-            if self.intermediate_target and self.position == self.intermediate_target:
-                self.intermediate_target = None
-            self.battery = max(0.0, self.battery - (0.1 * delta_time))
+        if self.state == RobotState.MOVING:
+            if self.waypoints:
+                self.position = self.waypoints.pop(0)
+                if self.intermediate_target and self.position == self.intermediate_target:
+                    self.intermediate_target = None
+                self.battery = max(0.0, self.battery - (0.1 * delta_time))
             if not self.waypoints:
                 self.state = RobotState.IDLE
         elif self.state == RobotState.CHARGING:

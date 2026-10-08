@@ -7,10 +7,13 @@ using FastEmbed for local embeddings and Qdrant for vector storage.
 
 from typing import List, Dict, Any
 import os
+import logging
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
+
+logger = logging.getLogger(__name__)
 
 
 class RAGEngine:
@@ -26,19 +29,43 @@ class RAGEngine:
         host: str = None,
         port: int = None,
         collection_name: str = None,
+        mode: str = None,
     ):
         self.host = host or os.getenv("QDRANT_HOST", "localhost")
         self.port = port or int(os.getenv("QDRANT_PORT", "6333"))
+        self.mode = (mode or os.getenv("QDRANT_MODE", "auto")).strip().lower()
 
         self.collection_name = (
             collection_name
             or os.getenv("QDRANT_COLLECTION_NAME", "warehouse_sops")
         )
 
-        self._qdrant_client = QdrantClient(
-            host=self.host,
-            port=self.port,
-        )
+        if self.mode == "memory":
+            logger.info("Initializing in-memory Qdrant client (:memory:).")
+            self._qdrant_client = QdrantClient(":memory:")
+        else:
+            try:
+                client = QdrantClient(
+                    host=self.host,
+                    port=self.port,
+                    timeout=2.0,
+                )
+                client.get_collections()
+                self._qdrant_client = client
+                logger.info("Connected to remote Qdrant server at %s:%s.", self.host, self.port)
+            except Exception as exc:
+                if self.mode == "auto":
+                    logger.warning(
+                        "Remote Qdrant unavailable at %s:%s (%s). Falling back to in-memory QdrantClient(':memory:').",
+                        self.host, self.port, exc
+                    )
+                    self._qdrant_client = QdrantClient(":memory:")
+                else:
+                    logger.error(
+                        "Failed to connect to remote Qdrant server at %s:%s in strict mode '%s': %s",
+                        self.host, self.port, self.mode, exc
+                    )
+                    raise exc
 
         self._embedding_model = TextEmbedding(
             model_name=self.EMBEDDING_MODEL
@@ -64,6 +91,15 @@ class RAGEngine:
                     distance=Distance.COSINE,
                 ),
             )
+            try:
+                from .ingestion import SOPIngestor
+                ingestor = SOPIngestor()
+                chunks = ingestor.prepare_chunks()
+                if chunks:
+                    self.index_chunks(chunks)
+                    logger.info("Automatically indexed %d SOP chunks into collection '%s'.", len(chunks), self.collection_name)
+            except Exception as e:
+                logger.warning("Could not auto-populate SOP collection: %s", e)
 
     def index_chunks(
         self,

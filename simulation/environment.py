@@ -159,14 +159,20 @@ class WarehouseEnvironment:
                 grid_bounds=grid_bounds
             )
 
-        if not full_path:
-            logger.warning("No valid route could be calculated for robot %s to %s.", robot_id, dest_pos)
-            return []
+        waypoints = full_path[1:] if len(full_path) > 1 else []
+        if not waypoints:
+            logger.warning("No waypoints generated for robot %s to %s (already at destination or empty path).", robot_id, dest_pos)
+            robot.destination = dest_pos
+            robot.final_destination = dest_pos
+            robot.intermediate_target = None
+            robot.waypoints = []
+            robot.state = RobotState.IDLE
+            return full_path
 
         robot.destination = dest_pos
-        robot.intermediate_target = source_pos
+        robot.intermediate_target = source_pos if (source_pos and source_pos != robot.position) else None
         robot.final_destination = dest_pos
-        robot.waypoints = full_path[1:]
+        robot.waypoints = waypoints
         robot.state = RobotState.MOVING
         robot.is_rerouted = False
         robot.stuck_duration = 0.0
