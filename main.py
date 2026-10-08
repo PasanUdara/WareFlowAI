@@ -8,6 +8,12 @@ import os
 import time
 import asyncio
 import logging
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, status, Depends
@@ -50,10 +56,18 @@ active_telemetry_clients: List[WebSocket] = []
 simulation_task: Optional[asyncio.Task] = None
 is_emergency_stopped: bool = False
 
+# Active Exception Handling Lifecycle tracking for frontend demo
+active_exception_lifecycle: Dict[str, Any] = {
+    "status": "IDLE",
+    "anomaly": None,
+    "recovery": None,
+    "updated_at": time.time()
+}
+
 
 async def telemetry_background_loop():
     """Background task advancing simulation, triggering event bus events, and broadcasting telemetry at 2Hz."""
-    global is_emergency_stopped
+    global is_emergency_stopped, active_exception_lifecycle
     tick_rate_hz = float(os.getenv("SIMULATION_TICK_RATE_HZ", 2.0))
     interval = 1.0 / tick_rate_hz if tick_rate_hz > 0 else 0.5
     
@@ -63,6 +77,10 @@ async def telemetry_background_loop():
                 anomalies = sim_env.tick(delta_time=interval)
                 # If anomalies occur, feed to exception handling agent, publish events, and execute recovery
                 for anomaly in anomalies:
+                    active_exception_lifecycle["status"] = "DETECTED"
+                    active_exception_lifecycle["anomaly"] = anomaly
+                    active_exception_lifecycle["updated_at"] = time.time()
+
                     await event_bus.publish(AgentMessageEnvelope(
                         source="simulation",
                         destination="exception_handling",
@@ -71,8 +89,13 @@ async def telemetry_background_loop():
                         priority=MessagePriority.HIGH
                     ))
                     
+                    active_exception_lifecycle["status"] = "ANALYZING"
                     recovery_decision = exception_agent.process_telemetry_event(anomaly)
                     if recovery_decision:
+                        active_exception_lifecycle["status"] = "RECOVERING"
+                        active_exception_lifecycle["recovery"] = recovery_decision
+                        active_exception_lifecycle["updated_at"] = time.time()
+
                         await event_bus.publish(AgentMessageEnvelope(
                             source="exception_handling",
                             destination="simulation",
@@ -81,6 +104,19 @@ async def telemetry_background_loop():
                             priority=MessagePriority.HIGH
                         ))
                         sim_env.execute_recovery(recovery_decision)
+
+            # Check if recovering robot has reached its target or entered charging/idle
+            if active_exception_lifecycle["status"] == "RECOVERING":
+                rec = active_exception_lifecycle.get("recovery") or {}
+                rec_robot_id = rec.get("robot_id")
+                if rec_robot_id:
+                    rec_robot = sim_env.get_robot(rec_robot_id)
+                    if rec_robot and (
+                        rec_robot.state == RobotState.CHARGING
+                        or (rec_robot.state == RobotState.IDLE and len(rec_robot.waypoints) == 0)
+                    ):
+                        active_exception_lifecycle["status"] = "RESOLVED"
+                        active_exception_lifecycle["updated_at"] = time.time()
             
             telemetry = sim_env.get_fleet_telemetry()
             
@@ -96,7 +132,9 @@ async def telemetry_background_loop():
             payload = {
                 "event_type": EventType.TELEMETRY_UPDATE.value,
                 "emergency_stopped": is_emergency_stopped,
-                "robots": telemetry
+                "robots": telemetry,
+                "active_exception": active_exception_lifecycle,
+                "blocked_cells": [list(c) for c in sim_env.grid.blocked_cells]
             }
             
             # Broadcast to connected WebSocket clients
@@ -139,11 +177,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-cors_origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173").split(",") if origin.strip()]
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:3000"
+    ).split(",")
+    if origin.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -183,6 +229,8 @@ class RobotUpdateRequest(BaseModel):
     enabled: Optional[bool] = Field(None)
 
 
+class AnomalyInjectRequest(BaseModel):
+    anomaly_type: str = Field(..., example="stuck", description="Anomaly type: 'stuck', 'low_battery', or 'block_path'")
 # --- Endpoints ---
 @app.get("/", summary="Root API info")
 def read_root():
@@ -311,6 +359,13 @@ async def dispatch_order(req: OrderDispatchRequest, current_user: Dict[str, Any]
         ))
 
     if assigned_id:
+        parsed = result_state.get("parsed_order") or {}
+        sim_env.dispatch_order_to_robot(
+            robot_id=assigned_id,
+            source_name=parsed.get("source"),
+            destination_name=parsed.get("destination"),
+            task_description=clean_order_text
+        )
         await event_bus.publish(AgentMessageEnvelope(
             source="task_planning",
             destination="simulation",
@@ -478,6 +533,42 @@ async def resume_simulation(current_user: Dict[str, Any] = Depends(get_current_u
     return await trigger_e_stop(resume=True, current_user=current_user)
 
 
+@app.post("/api/v1/simulation/robots/{robot_id}/inject-anomaly", summary="Inject synthetic anomaly into AMR for testing")
+async def inject_robot_anomaly(
+    robot_id: str,
+    req: AnomalyInjectRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Manually inject an anomaly condition into an AMR to test Exception Handling flow.
+    Does NOT bypass the Exception Handling Agent: the simulation loop will detect
+    the condition on the next tick and execute the normal agent recovery pipeline.
+    """
+    try:
+        res = sim_env.inject_anomaly(robot_id, req.anomaly_type)
+        return {
+            "success": True,
+            "message": f"Anomaly '{req.anomaly_type}' successfully injected into robot '{robot_id}'.",
+            "details": res
+        }
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+
+
+@app.post("/api/v1/simulation/obstacles/clear", summary="Clear dynamically added obstacles")
+async def clear_dynamic_obstacles(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Reset dynamic obstacles back to default grid layout."""
+    sim_env.clear_dynamic_obstacles()
+    return {"success": True, "message": "Dynamic obstacles cleared."}
+
+
+@app.get("/api/v1/simulation/exceptions/active", summary="Get active exception lifecycle state")
+def get_active_exception():
+    """Return latest exception lifecycle status and dynamic blocked cells."""
+    return {
+        "lifecycle": active_exception_lifecycle,
+        "blocked_cells": [list(c) for c in sim_env.grid.blocked_cells]
+    }
 @app.get("/api/v1/compliance/verify", summary="Verify SOP compliance")
 async def verify_compliance(
     payload_weight: float = Query(..., description="Weight in kg"),

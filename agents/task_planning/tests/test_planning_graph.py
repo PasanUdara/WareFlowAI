@@ -84,7 +84,7 @@ class TestParseOrder:
     @patch("agents.task_planning.nodes.parse_order.Groq")
     @patch.dict("os.environ", {"GROQ_API_KEY": "test-key"})
     def test_malformed_json(self, mock_groq_class):
-        """Groq returns invalid JSON → status='parse_failed'."""
+        """Groq returns invalid JSON → falls back to rule-based parser successfully."""
         mock_client = MagicMock()
         mock_groq_class.return_value = mock_client
         mock_client.chat.completions.create.return_value = _mock_groq_response(
@@ -93,13 +93,16 @@ class TestParseOrder:
 
         result = parse_order(_base_state())
 
-        assert result["status"] == "parse_failed"
-        assert result["parsed_order"] is None
+        assert result["status"] == "parsed"
+        assert result["parsed_order"]["item"] == "crates"
+        assert result["parsed_order"]["quantity"] == 3
+        assert result["parsed_order"]["source"] == "Shelf-A1"
+        assert result["parsed_order"]["destination"] == "Station-2"
 
     @patch("agents.task_planning.nodes.parse_order.Groq")
     @patch.dict("os.environ", {"GROQ_API_KEY": "test-key"})
     def test_missing_keys(self, mock_groq_class):
-        """Groq returns JSON but missing required keys → status='parse_failed'."""
+        """Groq returns JSON missing required keys → recovers via rule-based parser."""
         mock_client = MagicMock()
         mock_groq_class.return_value = mock_client
         mock_client.chat.completions.create.return_value = _mock_groq_response(
@@ -108,7 +111,11 @@ class TestParseOrder:
 
         result = parse_order(_base_state())
 
-        assert result["status"] == "parse_failed"
+        assert result["status"] == "parsed"
+        assert result["parsed_order"]["item"] == "crates"
+        assert result["parsed_order"]["quantity"] == 3
+        assert result["parsed_order"]["source"] == "Shelf-A1"
+        assert result["parsed_order"]["destination"] == "Station-2"
 
     def test_empty_order_text(self):
         """Empty order_text → status='parse_failed' without calling Groq."""
@@ -117,9 +124,18 @@ class TestParseOrder:
 
     @patch.dict("os.environ", {}, clear=True)
     def test_missing_api_key(self):
-        """No GROQ_API_KEY env var → status='parse_failed' gracefully."""
+        """No GROQ_API_KEY env var → successfully uses deterministic rule-based fallback."""
         result = parse_order(_base_state())
-        assert result["status"] == "parse_failed"
+        assert result["status"] == "parsed"
+        assert result["parsed_order"]["item"] == "crates"
+        assert result["parsed_order"]["quantity"] == 3
+        assert result["parsed_order"]["source"] == "Shelf-A1"
+        assert result["parsed_order"]["destination"] == "Station-2"
+
+        # Unparseable/ambiguous order without API key correctly fails
+        unparseable = parse_order(_base_state(order_text="Bring the blue box from somewhere over there"))
+        assert unparseable["status"] == "parse_failed"
+        assert unparseable["parsed_order"] is None
 
 
 class TestSanitizeOrderText:

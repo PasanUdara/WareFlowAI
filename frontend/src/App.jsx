@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import {
   checkCompliance,
   clearAuthToken,
+  clearDynamicObstacles,
   createRobot,
   disableRobot,
   dispatchOrder,
@@ -9,6 +10,7 @@ import {
   fetchEventHistory,
   fetchFleetStatus,
   getAuthToken,
+  injectRobotAnomaly,
   loginUser,
   triggerEmergencyStop
 } from './api';
@@ -23,7 +25,7 @@ const PRESET_ORDERS = [
 ];
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAuthToken()));
   const [currentUser, setCurrentUser] = useState(localStorage.getItem('wareflow_user') || 'admin');
   const [activeTab, setActiveTab] = useState('overview');
 
@@ -40,6 +42,10 @@ function App() {
   const [globalError, setGlobalError] = useState('');
   const [wsStatus, setWsStatus] = useState('Disconnected');
 
+  // Member 2 Exception Handling State
+  const [activeException, setActiveException] = useState(null);
+  const [blockedCells, setBlockedCells] = useState([]);
+  const [anomalyLoading, setAnomalyLoading] = useState(false);
   // Task Planner State
   const [orderText, setOrderText] = useState(defaultOrder);
   const [plan, setPlan] = useState(null);
@@ -110,6 +116,12 @@ function App() {
               if (data.emergency_stopped !== undefined) {
                 setEmergencyStop(Boolean(data.emergency_stopped));
               }
+            }
+            if (data.active_exception) {
+              setActiveException(data.active_exception);
+            }
+            if (data.blocked_cells) {
+              setBlockedCells(data.blocked_cells);
             }
           } catch (err) {
             console.error('WebSocket parse error:', err);
@@ -235,6 +247,7 @@ function App() {
       setPlan(result);
       if (result.assigned_robot_id) {
         setSelectedRobotId(result.assigned_robot_id);
+        setActiveTab('overview');
       }
       addActivityLog('Gateway', 'ORDER_DISPATCH', `Dispatched: "${orderText.substring(0, 30)}..."`);
       await loadEventHistory();
@@ -302,6 +315,32 @@ function App() {
     }
   };
 
+  const handleInjectAnomaly = async (anomalyType) => {
+    if (!selectedRobot) return;
+    setAnomalyLoading(true);
+    setGlobalError('');
+    try {
+      await injectRobotAnomaly(selectedRobot.robot_id, anomalyType);
+      addActivityLog('ExceptionAgent', 'ANOMALY_TRIGGERED', `${selectedRobot.robot_id}: ${anomalyType}`);
+      await loadFleetData();
+      await loadEventHistory();
+    } catch (err) {
+      setGlobalError(err.message || `Failed to inject anomaly '${anomalyType}'`);
+    } finally {
+      setAnomalyLoading(false);
+    }
+  };
+
+  const handleClearObstacles = async () => {
+    try {
+      await clearDynamicObstacles();
+      setBlockedCells([]);
+      addActivityLog('Simulation', 'CLEAR_OBSTACLES', 'Dynamic blocked obstacles cleared');
+      await loadFleetData();
+    } catch (err) {
+      setGlobalError(err.message || 'Failed to clear obstacles');
+    }
+  };
   const handleCheckCompliance = async (e) => {
     e.preventDefault();
     setGlobalError('');
@@ -419,8 +458,11 @@ function App() {
           <button className={`nav-item ${activeTab === 'planning' ? 'active' : ''}`} onClick={() => setActiveTab('planning')}>
             <i>✦</i> Task Planner <small className="badge-member">M1</small>
           </button>
+          <button className={`nav-item ${activeTab === 'exception' ? 'active' : ''}`} onClick={() => setActiveTab('exception')}>
+            <i>⚠️</i> Exception Recovery <small className="badge-member">M2</small>
+          </button>
           <button className={`nav-item ${activeTab === 'fleet' ? 'active' : ''}`} onClick={() => setActiveTab('fleet')}>
-            <i>◉</i> Fleet Command <small className="badge-member">M2/M4</small>
+            <i>◉</i> Fleet Command <small className="badge-member">M4</small>
           </button>
           <button className={`nav-item ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => setActiveTab('compliance')}>
             <i>✓</i> Compliance RAG <small className="badge-member">M3</small>
@@ -523,6 +565,10 @@ function App() {
                     <span><b className="dot cyan" /> IDLE</span>
                     <span><b className="dot violet" /> MOVING</span>
                     <span><b className="dot orange" /> ATTENTION</span>
+                    <span><b className="dot" style={{ background: '#60a5fa' }} /> ROUTE</span>
+                    <span><b className="dot" style={{ background: '#fbbf24' }} /> A* DETOUR</span>
+                    <span>🏁 GOAL</span>
+                    <span>🧱 OBSTACLE</span>
                   </div>
                 </div>
 
@@ -536,10 +582,14 @@ function App() {
                       return Number(rx) === x && Number(ry) === y;
                     });
                     const isSelected = robot && robot.robot_id === selectedRobotId;
+                    const isWaypoint = selectedRobot?.waypoints?.some((wp) => Number(wp[0]) === x && Number(wp[1]) === y);
+                    const isDestination = selectedRobot?.destination && Number(selectedRobot.destination[0]) === x && Number(selectedRobot.destination[1]) === y;
+                    const isBlocked = blockedCells?.some((bc) => Number(bc[0]) === x && Number(bc[1]) === y);
+                    const isRerouted = Boolean(selectedRobot?.is_rerouted);
 
                     return (
                       <div className={`grid-square ${isSelected ? 'selected-square' : ''}`} key={index}>
-                        {robot && (
+                        {robot ? (
                           <button
                             className={`robot-pin ${String(robot.state).toLowerCase()} ${robot.enabled === false ? 'disabled' : ''}`}
                             onClick={() => setSelectedRobotId(robot.robot_id)}
@@ -547,7 +597,16 @@ function App() {
                           >
                             {robot.robot_id}
                           </button>
-                        )}
+                        ) : isDestination ? (
+                          <span className="destination-marker" title="Destination Target">🏁</span>
+                        ) : isBlocked ? (
+                          <span className="obstacle-marker" title="Dynamic Blocked Obstacle">🧱</span>
+                        ) : isWaypoint ? (
+                          <div
+                            className={`waypoint-dot ${isRerouted ? 'rerouted' : ''}`}
+                            title={isRerouted ? 'A* Detour Waypoint' : 'A* Planned Waypoint'}
+                          />
+                        ) : null}
                       </div>
                     );
                   })}
@@ -581,6 +640,7 @@ function App() {
                       <div className="t-row"><span>Battery Level</span><strong>{selectedRobot.battery}%</strong></div>
                       <div className="t-row"><span>Current Task</span><strong>{selectedRobot.current_task || 'None (Idle)'}</strong></div>
                       <div className="t-row"><span>Operational Status</span><strong>{selectedRobot.enabled !== false ? 'Enabled' : 'Disabled'}</strong></div>
+                      <div className="t-row"><span>Route Status</span><strong>{selectedRobot.is_rerouted ? '⚠️ Detoured (A*)' : selectedRobot.waypoints?.length ? 'Active Route' : 'Idle'}</strong></div>
                     </div>
 
                     <button
@@ -589,6 +649,48 @@ function App() {
                     >
                       {selectedRobot.enabled !== false ? 'Disable Robot' : 'Enable Robot'}
                     </button>
+
+                    {/* Member 2 Exception Handling Demo Controls */}
+                    <div style={{ marginTop: '14px', borderTop: '1px solid #1e354d', paddingTop: '12px' }}>
+                      <p className="overline" style={{ color: '#5ee2b1' }}>MEMBER 2: EXCEPTION DEMO CONTROLS</p>
+                      <div className="anomaly-actions-bar">
+                        <button
+                          type="button"
+                          className="anomaly-btn stuck"
+                          disabled={anomalyLoading}
+                          onClick={() => handleInjectAnomaly('stuck')}
+                          title="Simulate motor stall / stuck AMR condition"
+                        >
+                          ⚠️ Inject Stuck
+                        </button>
+                        <button
+                          type="button"
+                          className="anomaly-btn battery"
+                          disabled={anomalyLoading}
+                          onClick={() => handleInjectAnomaly('low_battery')}
+                          title="Simulate critical low battery (< 15%)"
+                        >
+                          🪫 Low Battery (10%)
+                        </button>
+                        <button
+                          type="button"
+                          className="anomaly-btn block"
+                          disabled={anomalyLoading}
+                          onClick={() => handleInjectAnomaly('block_path')}
+                          title="Place obstacle on robot route"
+                        >
+                          🚧 Block Path
+                        </button>
+                        <button
+                          type="button"
+                          className="anomaly-btn clear"
+                          onClick={handleClearObstacles}
+                          title="Clear all dynamic obstacles"
+                        >
+                          🔄 Clear Obstacles
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <p className="overline">Click a robot on the grid to inspect details.</p>
@@ -596,6 +698,76 @@ function App() {
               </div>
             </div>
 
+            {/* Member 2 Dedicated Exception Pipeline Card */}
+            <div className="card exception-panel margin-top">
+              <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <span className="badge-member">Member 2 Agent</span>
+                  <p className="overline">AUTONOMOUS EXCEPTION HANDLING & RECOVERY ENGINE</p>
+                  <h3>Active Anomaly & Recovery Lifecycle</h3>
+                </div>
+                <span className={`status-pill-lg ${(activeException?.status || 'IDLE').toLowerCase()}`} style={{
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  font: '11px "DM Mono", monospace',
+                  background: activeException?.status === 'RECOVERING' ? '#1d4ed8' : activeException?.status === 'RESOLVED' ? '#047857' : activeException?.status === 'DETECTED' ? '#b91c1c' : '#1e293b',
+                  color: '#fff',
+                  border: '1px solid rgba(255,255,255,0.2)'
+                }}>
+                  {activeException?.status || 'IDLE'}
+                </span>
+              </div>
+
+              <div className="exception-stepper">
+                <div className={`step-badge ${['DETECTED', 'ANALYZING', 'RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step' : ''}`}>
+                  1. DETECTED
+                </div>
+                <div className={`step-badge ${['ANALYZING', 'RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step analyzing' : ''}`}>
+                  2. ANALYZING (MONITOR)
+                </div>
+                <div className={`step-badge ${['RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step recovering' : ''}`}>
+                  3. RECOVERING (A* / CHARGER)
+                </div>
+                <div className={`step-badge ${activeException?.status === 'RESOLVED' ? 'active-step resolved' : ''}`}>
+                  4. RESOLVED
+                </div>
+              </div>
+
+              {activeException?.anomaly ? (
+                <div className="recovery-details-box">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '11px' }}>ANOMALY TYPE:</span>
+                      <div style={{ fontWeight: 700, color: '#f87171' }}>
+                        {activeException.anomaly.event_type || activeException.anomaly.anomaly_type || 'ANOMALY'} ({activeException.anomaly.robot_id || 'AMR'})
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '11px' }}>SEVERITY:</span>
+                      <div style={{ fontWeight: 700, color: activeException.anomaly.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b' }}>
+                        {activeException.anomaly.severity || 'HIGH'}
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '11px' }}>RECOVERY DECISION:</span>
+                      <div style={{ fontWeight: 700, color: '#38bdf8' }}>
+                        {activeException.recovery?.action_type || 'Analyzing recovery directive...'}
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8', fontSize: '11px' }}>RECOVERY DIRECTIVE:</span>
+                      <div style={{ fontSize: '12px', color: '#cbd5e1' }}>
+                        {activeException.recovery?.notes || 'Calculating optimal A* detour...'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="recovery-details-box" style={{ color: '#94a3b8', fontSize: '11px' }}>
+                  ✓ Fleet operating normally. Select an AMR and click "⚠️ Inject Stuck", "🪫 Low Battery", or "🚧 Block Path" to test autonomous recovery.
+                </div>
+              )}
+            </div>
             {/* Agent Activity / Event Log Stream */}
             <div className="card margin-top">
               <div className="card-header">
@@ -695,6 +867,125 @@ function App() {
           </div>
         )}
 
+        {/* TAB: EXCEPTION HANDLING (MEMBER 2) */}
+        {activeTab === 'exception' && (
+          <div className="tab-view fade-in">
+            <div className="section-title-box">
+              <span className="member-tag">Member 2 Agent</span>
+              <h2>Exception Handling & Anomaly Recovery Engine</h2>
+              <p>Autonomous robot telemetry monitoring, fault recovery decisioning, and A* detour recalculation.</p>
+            </div>
+
+            <div className="dashboard-grid">
+              <div className="card">
+                <div className="card-header">
+                  <div>
+                    <p className="overline">EXCEPTION DEMO CONTROLS</p>
+                    <h3>Manual Anomaly Injection for {selectedRobot?.robot_id || 'AMR'}</h3>
+                  </div>
+                </div>
+
+                <p style={{ color: '#94a3b8', fontSize: '13px' }}>
+                  Inject physical fault conditions into the selected robot. The simulation loop and Exception Handling Agent will autonomously detect the condition, evaluate SOP rules, and apply recovery actions.
+                </p>
+
+                <div className="anomaly-actions-bar" style={{ marginTop: '18px' }}>
+                  <button
+                    type="button"
+                    className="anomaly-btn stuck"
+                    disabled={anomalyLoading}
+                    onClick={() => handleInjectAnomaly('stuck')}
+                    style={{ padding: '12px 18px', fontSize: '12px' }}
+                  >
+                    ⚠️ Force Robot Stuck (12s stall)
+                  </button>
+                  <button
+                    type="button"
+                    className="anomaly-btn battery"
+                    disabled={anomalyLoading}
+                    onClick={() => handleInjectAnomaly('low_battery')}
+                    style={{ padding: '12px 18px', fontSize: '12px' }}
+                  >
+                    🪫 Drain Battery to 10% (Critical)
+                  </button>
+                  <button
+                    type="button"
+                    className="anomaly-btn block"
+                    disabled={anomalyLoading}
+                    onClick={() => handleInjectAnomaly('block_path')}
+                    style={{ padding: '12px 18px', fontSize: '12px' }}
+                  >
+                    🚧 Place Obstacle on Path
+                  </button>
+                  <button
+                    type="button"
+                    className="anomaly-btn clear"
+                    onClick={handleClearObstacles}
+                    style={{ padding: '12px 18px', fontSize: '12px' }}
+                  >
+                    🔄 Clear All Obstacles
+                  </button>
+                </div>
+
+                <div className="recovery-details-box" style={{ marginTop: '20px' }}>
+                  <h4 style={{ margin: '0 0 8px', color: '#5ee2b1' }}>Recovery Decision Architecture (Deterministic)</h4>
+                  <ul style={{ margin: 0, paddingLeft: '18px', color: '#cbd5e1', fontSize: '12px', lineHeight: '1.8' }}>
+                    <li><strong>ROBOT_STUCK (Stall &gt; 10s):</strong> Evaluates obstacle map ➔ Calculates dynamic A* detour avoiding blocked cells ➔ Resumes movement.</li>
+                    <li><strong>LOW_BATTERY (&lt; 15%):</strong> Aborts current task ➔ Finds closest warehouse charger via Manhattan distance ➔ Routes to dock.</li>
+                    <li><strong>PATH_BLOCKED / MOTOR_STALL:</strong> Escalates to human operator ➔ Logs critical audit envelope ➔ Broadcasts event.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="card-header">
+                  <div>
+                    <p className="overline">ACTIVE LIFECYCLE</p>
+                    <h3>Recovery Pipeline Status</h3>
+                  </div>
+                  <span className={`status-pill-lg ${(activeException?.status || 'IDLE').toLowerCase()}`} style={{
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    font: '10px "DM Mono", monospace',
+                    background: activeException?.status === 'RECOVERING' ? '#1d4ed8' : activeException?.status === 'RESOLVED' ? '#047857' : activeException?.status === 'DETECTED' ? '#b91c1c' : '#1e293b',
+                    color: '#fff'
+                  }}>
+                    {activeException?.status || 'IDLE'}
+                  </span>
+                </div>
+
+                <div className="exception-stepper">
+                  <div className={`step-badge ${['DETECTED', 'ANALYZING', 'RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step' : ''}`}>
+                    1. DETECTED
+                  </div>
+                  <div className={`step-badge ${['ANALYZING', 'RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step analyzing' : ''}`}>
+                    2. ANALYZING
+                  </div>
+                  <div className={`step-badge ${['RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step recovering' : ''}`}>
+                    3. RECOVERING
+                  </div>
+                  <div className={`step-badge ${activeException?.status === 'RESOLVED' ? 'active-step resolved' : ''}`}>
+                    4. RESOLVED
+                  </div>
+                </div>
+
+                {activeException?.anomaly ? (
+                  <div className="telemetry-rows" style={{ marginTop: '16px' }}>
+                    <div className="t-row"><span>Affected AMR</span><strong>{activeException.anomaly.robot_id}</strong></div>
+                    <div className="t-row"><span>Anomaly Type</span><strong style={{ color: '#f87171' }}>{activeException.anomaly.event_type || activeException.anomaly.anomaly_type}</strong></div>
+                    <div className="t-row"><span>Severity</span><strong>{activeException.anomaly.severity || 'HIGH'}</strong></div>
+                    <div className="t-row"><span>Decision</span><strong style={{ color: '#38bdf8' }}>{activeException.recovery?.action_type || 'Analyzing...'}</strong></div>
+                    <div className="t-row"><span>Action Notes</span><small style={{ color: '#94a3b8' }}>{activeException.recovery?.notes || 'Executing...'}</small></div>
+                  </div>
+                ) : (
+                  <p className="overline" style={{ marginTop: '20px' }}>
+                    No exception currently active. All fleet units healthy.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {/* TAB 3: FLEET MANAGEMENT */}
         {activeTab === 'fleet' && (
           <div className="tab-view fade-in">

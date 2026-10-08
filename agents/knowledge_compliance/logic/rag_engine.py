@@ -14,6 +14,8 @@ from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
+logger = logging.getLogger(__name__)
+
 
 class RAGEngine:
     """
@@ -28,9 +30,11 @@ class RAGEngine:
         host: str = None,
         port: int = None,
         collection_name: str = None,
+        mode: str = None,
     ):
         self.host = host or os.getenv("QDRANT_HOST", "localhost")
         self.port = port or int(os.getenv("QDRANT_PORT", "6333"))
+        self.mode = (mode or os.getenv("QDRANT_MODE", "auto")).strip().lower()
 
         self.collection_name = (
             collection_name
@@ -47,30 +51,39 @@ class RAGEngine:
 
     def _create_client(self) -> QdrantClient:
         """Create and return a QdrantClient instance based on QDRANT_MODE environment configuration."""
-        mode = os.getenv("QDRANT_MODE", "auto").lower().strip()
-        logger = logging.getLogger("wareflow.rag")
+        mode = (self.mode or os.getenv("QDRANT_MODE", "auto")).lower().strip()
 
         if mode == "memory":
+            logger.info("Initializing in-memory Qdrant client (:memory:).")
             return QdrantClient(":memory:")
         elif mode == "server":
             client = QdrantClient(host=self.host, port=self.port)
             client.get_collections()
+            logger.info("Connected to remote Qdrant server at %s:%s.", self.host, self.port)
             return client
         else:
             try:
                 client = QdrantClient(
                     host=self.host,
                     port=self.port,
-                    timeout=3
+                    timeout=2.0,
                 )
                 client.get_collections()
+                logger.info("Connected to remote Qdrant server at %s:%s.", self.host, self.port)
                 return client
-            except Exception as e:
-                logger.warning(
-                    "Failed to connect to Qdrant server at %s:%s (%s). Falling back to in-memory instance.",
-                    self.host, self.port, e
-                )
-                return QdrantClient(":memory:")
+            except Exception as exc:
+                if mode == "auto":
+                    logger.warning(
+                        "Remote Qdrant unavailable at %s:%s (%s). Falling back to in-memory QdrantClient(':memory:').",
+                        self.host, self.port, exc
+                    )
+                    return QdrantClient(":memory:")
+                else:
+                    logger.error(
+                        "Failed to connect to remote Qdrant server at %s:%s in strict mode '%s': %s",
+                        self.host, self.port, mode, exc
+                    )
+                    raise exc
 
     def _ensure_collection(self) -> None:
         """Create the Qdrant collection if it does not exist."""
@@ -90,6 +103,15 @@ class RAGEngine:
                     distance=Distance.COSINE,
                 ),
             )
+            try:
+                from .ingestion import SOPIngestor
+                ingestor = SOPIngestor()
+                chunks = ingestor.prepare_chunks()
+                if chunks:
+                    self.index_chunks(chunks)
+                    logger.info("Automatically indexed %d SOP chunks into collection '%s'.", len(chunks), self.collection_name)
+            except Exception as e:
+                logger.warning("Could not auto-populate SOP collection: %s", e)
 
         self._auto_index_if_empty()
 

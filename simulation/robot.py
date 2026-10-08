@@ -48,6 +48,9 @@ class Robot:
         self.current_task_id: Optional[str] = None
         self.speed_ms = 1.0
         self.stuck_duration = 0.0
+        self.is_rerouted = False
+        self.intermediate_target: Optional[Tuple[int, int]] = None
+        self.final_destination: Optional[Tuple[int, int]] = None
         
     def to_telemetry(self) -> Dict[str, Any]:
         """Serialize current state into normalized telemetry dictionary."""
@@ -60,7 +63,7 @@ class Robot:
             "x": x_val,
             "y": y_val,
             "position": [x_val, y_val],
-            "destination": self.destination,
+            "destination": list(self.destination) if self.destination else None,
             "battery": round(self.battery, 1),
             "state": self.state.value if hasattr(self.state, "value") else str(self.state),
             "speed_ms": self.speed_ms,
@@ -70,14 +73,21 @@ class Robot:
             "enabled": self.enabled,
             "created_at": self.created_at,
             "stuck_duration": self.stuck_duration,
-            "waypoints_remaining": len(self.waypoints)
+            "waypoints": [list(w) for w in self.waypoints],
+            "waypoints_remaining": len(self.waypoints),
+            "is_rerouted": getattr(self, "is_rerouted", False),
+            "intermediate_target": list(self.intermediate_target) if getattr(self, "intermediate_target", None) else None,
+            "final_destination": list(self.final_destination) if getattr(self, "final_destination", None) else None
         }
 
     def tick(self, delta_time: float = 0.5):
         """Advance robot physics, position, and battery consumption."""
-        if self.state == RobotState.MOVING and self.waypoints:
-            self.position = self.waypoints.pop(0)
-            self.battery = max(0.0, self.battery - (0.1 * delta_time))
+        if self.state == RobotState.MOVING:
+            if self.waypoints:
+                self.position = self.waypoints.pop(0)
+                if self.intermediate_target and self.position == self.intermediate_target:
+                    self.intermediate_target = None
+                self.battery = max(0.0, self.battery - (0.1 * delta_time))
             if not self.waypoints:
                 self.state = RobotState.IDLE
         elif self.state == RobotState.CHARGING:

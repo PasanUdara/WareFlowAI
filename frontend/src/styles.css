@@ -11,3 +11,23 @@
 .modal-overlay{position:fixed;inset:0;background:rgba(4,10,18,.8);backdrop-filter:blur(8px);display:grid;place-items:center;z-index:99}.modal-card{width:100%;max-width:480px;padding:28px}.user-profile{margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;color:#9cb1c9;font-size:11px}
 
 @media(max-width:1050px){.sidebar{width:76px;padding:22px 11px}.brand{padding:0 8px 34px}.brand>div:last-child,.nav-item:not(.active)::after,.nav-item{font-size:0}.nav-item{justify-content:center;padding:13px}.nav-item i{font-size:18px}.sidebar-footer{display:none}.workspace{margin-left:76px;width:calc(100% - 76px);padding-inline:24px}.metric-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.workspace{margin:0;width:100%;padding:0 14px 30px}.sidebar{display:none}.topbar{height:auto;padding:18px 0;gap:12px;align-items:flex-start;flex-direction:column}.hero{padding:28px;min-height:0}.hero-orbit{display:none}.dashboard-grid,.bottom-grid,.planner{grid-template-columns:1fr;gap:18px}.metric-grid{grid-template-columns:1fr 1fr}.metric{padding:13px}.header-actions{flex-wrap:wrap}.extracted{gap:15px;flex-wrap:wrap}}@media(max-width:430px){.metric-grid{grid-template-columns:1fr}.hero h2{font-size:23px}.card,.planner{padding:17px}.stop-button{padding:9px}.system-state{display:none}}
+/* Member 2 Exception Handling & Route Visualization */
+.waypoint-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 8px #3b82f6;pointer-events:none}
+.waypoint-dot.rerouted{background:#fbbf24;box-shadow:0 0 10px #f59e0b}
+.destination-marker{font-size:11px;pointer-events:none;animation:pulse 1.5s infinite}
+.obstacle-marker{font-size:11px;pointer-events:none}
+.exception-panel{margin-top:18px;border:1px solid #7a3c48;background:linear-gradient(145deg,rgba(40,20,28,.9),rgba(15,25,42,.9));border-radius:14px;padding:20px}
+.exception-stepper{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}
+.step-badge{padding:6px 12px;border-radius:20px;font:10px 'DM Mono',monospace;letter-spacing:1px;background:#11263c;color:#64748b;border:1px solid #1e3a5f;transition:all .3s ease}
+.step-badge.active-step{background:#ef4444;color:#fff;border-color:#f87171;box-shadow:0 0 12px rgba(239,68,68,.5)}
+.step-badge.active-step.analyzing{background:#f59e0b;color:#fff;border-color:#fbbf24;box-shadow:0 0 12px rgba(245,158,11,.5)}
+.step-badge.active-step.recovering{background:#3b82f6;color:#fff;border-color:#60a5fa;box-shadow:0 0 12px rgba(59,130,246,.5)}
+.step-badge.active-step.resolved{background:#10b981;color:#fff;border-color:#34d399;box-shadow:0 0 12px rgba(16,185,129,.5)}
+.anomaly-actions-bar{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.anomaly-btn{padding:8px 14px;border-radius:8px;border:1px solid #475569;background:#1e293b;color:#e2e8f0;font-size:11px;font-weight:600;cursor:pointer;transition:all .2s ease}
+.anomaly-btn:hover{background:#334155;border-color:#94a3b8}
+.anomaly-btn.stuck{border-color:#f59e0b;color:#fef3c7}
+.anomaly-btn.battery{border-color:#ef4444;color:#fee2e2}
+.anomaly-btn.block{border-color:#ec4899;color:#fce7f3}
+.anomaly-btn.clear{border-color:#10b981;color:#d1fae5}
+.recovery-details-box{background:rgba(15,23,42,.7);border:1px solid #334155;border-radius:8px;padding:12px;margin-top:12px;font-size:12px}

@@ -146,3 +146,27 @@ export async function sendMCPMessage(method, params = {}) {
   return handleResponse(response);
 }
 
+export async function injectRobotAnomaly(robotId, anomalyType) {
+  const response = await fetch(`${API_BASE}/api/v1/simulation/robots/${robotId}/inject-anomaly`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ anomaly_type: anomalyType })
+  });
+  return handleResponse(response);
+}
+
+export async function clearDynamicObstacles() {
+  const response = await fetch(`${API_BASE}/api/v1/simulation/obstacles/clear`, {
+    method: 'POST',
+    headers: getHeaders()
+  });
+  return handleResponse(response);
+}
+
+export async function fetchActiveException() {
+  const response = await fetch(`${API_BASE}/api/v1/simulation/exceptions/active`, {
+    headers: getHeaders()
+  });
+  return handleResponse(response);
+}
+
