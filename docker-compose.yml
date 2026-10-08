@@ -64,7 +64,8 @@ services:
       - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - wareflow_net
