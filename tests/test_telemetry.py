@@ -10,7 +10,10 @@ from fastapi.testclient import TestClient
 from main import app, sim_env, event_bus
 from communication import AgentMessageEnvelope, EventType
 
-client = TestClient(app)
+@pytest.fixture
+def client():
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def test_simulation_telemetry_generation():
@@ -51,7 +54,7 @@ async def test_event_bus_telemetry_subscription():
     assert "robots" in received[0].payload
 
 
-def test_websocket_telemetry_connection_and_stream():
+def test_websocket_telemetry_connection_and_stream(client):
     """Verify WebSocket /ws/telemetry connects and receives live JSON telemetry packets."""
     with client.websocket_connect("/ws/telemetry") as websocket:
         # Client sends ping or waits for initial telemetry broadcast
@@ -60,7 +63,7 @@ def test_websocket_telemetry_connection_and_stream():
         assert isinstance(data.get("robots", []), list)
 
 
-def test_websocket_multi_client_and_disconnect():
+def test_websocket_multi_client_and_disconnect(client):
     """Verify multiple simultaneous WebSocket connections work and disconnect safely."""
     with client.websocket_connect("/ws/telemetry") as ws1:
         with client.websocket_connect("/ws/telemetry") as ws2:

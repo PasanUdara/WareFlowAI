@@ -283,33 +283,68 @@ def login(req: AuthLoginRequest):
 
 
 @app.post("/api/v1/orders/dispatch", summary="Dispatch warehouse order")
-async def dispatch_order(req: OrderDispatchRequest, current_user: Dict[str, Any] = Depends(get_current_user)):
+async def dispatch_order(
+    req: OrderDispatchRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """
-    Ingest natural language order, sanitize input against prompt injection, invoke LangGraph task planning agent,
-    verify compliance, publish events to event bus, and assign AMR or escalate.
+    End-to-end warehouse order workflow:
+
+    1. Sanitize user order.
+    2. Send order to Task Planning Agent.
+    3. Build compliance context from the planned task and live robot telemetry.
+    4. Send task to Knowledge/Compliance Agent.
+    5. Stop the task if compliance is rejected.
+    6. Dispatch the robot only after compliance approval.
+    7. Exception Handling Agent continues to process robot telemetry
+       through the existing simulation lifecycle.
     """
+
+    # ---------------------------------------------------------------
+    # 1. Security / input sanitization
+    # ---------------------------------------------------------------
     sanitization_res = sanitize_user_input(req.order_text)
+
     if not sanitization_res["allowed"]:
-        raise HTTPException(status_code=400, detail=sanitization_res["reason"])
+        raise HTTPException(
+            status_code=400,
+            detail=sanitization_res["reason"]
+        )
 
     clean_order_text = sanitization_res["sanitized_text"]
 
-    # Publish ORDER_RECEIVED event
-    await event_bus.publish(AgentMessageEnvelope(
-        source="gateway",
-        destination="task_planning",
-        event_type=EventType.ORDER_RECEIVED,
-        payload={"order_text": clean_order_text, "requested_by": current_user.get("sub")}
-    ))
+    # ---------------------------------------------------------------
+    # 2. Notify Task Planning Agent
+    # ---------------------------------------------------------------
+    await event_bus.publish(
+        AgentMessageEnvelope(
+            source="gateway",
+            destination="task_planning",
+            event_type=EventType.ORDER_RECEIVED,
+            payload={
+                "order_text": clean_order_text,
+                "requested_by": current_user.get("sub")
+            }
+        )
+    )
 
-    # Fetch live available robots from simulation
+    # ---------------------------------------------------------------
+    # 3. Get live robot information from simulation
+    # ---------------------------------------------------------------
     fleet = sim_env.get_fleet_telemetry()
+
     available_robots = [
-        {"id": r["robot_id"], "battery": r["battery"], "status": r["state"]}
+        {
+            "id": r["robot_id"],
+            "battery": r["battery"],
+            "status": r["state"]
+        }
         for r in fleet
     ]
-    
-    # Construct initial state
+
+    # ---------------------------------------------------------------
+    # 4. Run Task Planning Agent
+    # ---------------------------------------------------------------
     initial_state: TaskPlanningState = {
         "order_text": clean_order_text,
         "order_raw": clean_order_text,
@@ -323,78 +358,228 @@ async def dispatch_order(req: OrderDispatchRequest, current_user: Dict[str, Any]
         "status": "pending",
         "error_message": None
     }
-    
-    # Run LangGraph StateGraph
-    result_state = task_planning_graph.invoke(initial_state)
-    assigned_id = result_state.get("assigned_robot") or result_state.get("assigned_robot_id")
-    
-    # Verify Compliance with KnowledgeComplianceAgent
-    comp_check = compliance_agent.check_compliance({
-        "payload_weight": 10.0,
-        "speed": 1.0,
-        "is_hazmat": "hazmat" in clean_order_text.lower(),
-        "target_zone": "General"
-    })
-    
-    await event_bus.publish(AgentMessageEnvelope(
-        source="gateway",
-        destination="knowledge_compliance",
-        event_type=EventType.COMPLIANCE_CHECK,
-        payload=comp_check
-    ))
 
-    if comp_check.get("is_compliant"):
-        await event_bus.publish(AgentMessageEnvelope(
+    result_state = task_planning_graph.invoke(initial_state)
+
+    assigned_id = (
+        result_state.get("assigned_robot")
+        or result_state.get("assigned_robot_id")
+    )
+
+    parsed = result_state.get("parsed_order") or {}
+
+    # ---------------------------------------------------------------
+    # 5. Handle Task Planning failure
+    # ---------------------------------------------------------------
+    if not assigned_id:
+        if result_state.get("requires_escalation"):
+            await event_bus.publish(
+                AgentMessageEnvelope(
+                    source="task_planning",
+                    destination="gateway",
+                    event_type=EventType.HUMAN_ESCALATION,
+                    payload={
+                        "reason": result_state.get("escalation_reason")
+                    },
+                    priority=MessagePriority.HIGH
+                )
+            )
+
+        return {
+            "success": False,
+            "assigned_robot_id": None,
+            "status": result_state.get(
+                "status",
+                "failed_no_robot"
+            ),
+            "requires_escalation": result_state.get(
+                "requires_escalation",
+                False
+            ),
+            "escalation_reason": result_state.get(
+                "escalation_reason"
+            ),
+            "parsed_order": parsed,
+            "subtasks": result_state.get("subtasks") or [],
+            "message": "Task planning could not assign a robot."
+        }
+
+    # ---------------------------------------------------------------
+    # 6. Find selected robot's LIVE telemetry
+    # ---------------------------------------------------------------
+    selected_robot = next(
+        (
+            robot
+            for robot in fleet
+            if robot.get("robot_id") == assigned_id
+        ),
+        None
+    )
+
+    if selected_robot is None:
+        return {
+            "success": False,
+            "assigned_robot_id": assigned_id,
+            "status": "robot_not_found",
+            "parsed_order": parsed,
+            "subtasks": result_state.get("subtasks") or [],
+            "message": "Assigned robot could not be found in live fleet telemetry."
+        }
+
+    # ---------------------------------------------------------------
+    # 7. Build Compliance context
+    #
+    # Member 1's parsed order structure remains unchanged:
+    # item / quantity / source / destination
+    #
+    # Additional runtime information is created here in the
+    # integration layer instead of changing Member 1's agent.
+    # ---------------------------------------------------------------
+
+    target_zone = parsed.get("destination") or "General"
+
+    is_hazmat = (
+        "hazmat" in clean_order_text.lower()
+        or "hazardous" in clean_order_text.lower()
+        or "chemical" in clean_order_text.lower()
+    )
+
+    live_battery = selected_robot.get("battery", 100.0)
+
+    # The current OrderDispatchRequest does not contain payload weight
+    # or requested speed. These are integration defaults until such
+    # information is provided by the order/catalog system.
+    payload_weight = 0.0
+    proposed_speed = 1.0
+
+    compliance_params = {
+        "payload_weight": payload_weight,
+        "speed": proposed_speed,
+        "is_hazmat": is_hazmat,
+        "target_zone": target_zone,
+        "battery_level": live_battery
+    }
+
+    # ---------------------------------------------------------------
+    # 8. Knowledge & Compliance Agent
+    # ---------------------------------------------------------------
+    comp_check = compliance_agent.check_compliance(
+        compliance_params
+    )
+
+    await event_bus.publish(
+        AgentMessageEnvelope(
+            source="gateway",
+            destination="knowledge_compliance",
+            event_type=EventType.COMPLIANCE_CHECK,
+            payload={
+                "task": parsed,
+                "robot_id": assigned_id,
+                "compliance_parameters": compliance_params,
+                "result": comp_check
+            }
+        )
+    )
+
+    # ---------------------------------------------------------------
+    # 9. COMPLIANCE GATE
+    # ---------------------------------------------------------------
+    if not comp_check.get("is_compliant", False):
+
+        await event_bus.publish(
+            AgentMessageEnvelope(
+                source="knowledge_compliance",
+                destination="task_planning",
+                event_type=EventType.COMPLIANCE_REJECTED,
+                payload=comp_check
+            )
+        )
+
+        # IMPORTANT:
+        # Do NOT dispatch the robot when compliance fails.
+        return {
+            "success": False,
+            "assigned_robot_id": assigned_id,
+            "status": "compliance_rejected",
+            "requires_escalation": False,
+            "parsed_order": parsed,
+            "subtasks": result_state.get("subtasks") or [],
+            "compliance": comp_check,
+            "message": "Task rejected by Knowledge & Compliance Agent. Robot was not dispatched."
+        }
+
+    # ---------------------------------------------------------------
+    # 10. Compliance approved
+    # ---------------------------------------------------------------
+    await event_bus.publish(
+        AgentMessageEnvelope(
             source="knowledge_compliance",
             destination="task_planning",
             event_type=EventType.COMPLIANCE_APPROVED,
             payload=comp_check
-        ))
-    else:
-        await event_bus.publish(AgentMessageEnvelope(
-            source="knowledge_compliance",
-            destination="task_planning",
-            event_type=EventType.COMPLIANCE_REJECTED,
-            payload=comp_check
-        ))
-
-    if assigned_id:
-        parsed = result_state.get("parsed_order") or {}
-        sim_env.dispatch_order_to_robot(
-            robot_id=assigned_id,
-            source_name=parsed.get("source"),
-            destination_name=parsed.get("destination"),
-            task_description=clean_order_text
         )
-        await event_bus.publish(AgentMessageEnvelope(
+    )
+
+    # ---------------------------------------------------------------
+    # 11. Dispatch approved task to robot
+    # ---------------------------------------------------------------
+    sim_env.dispatch_order_to_robot(
+        robot_id=assigned_id,
+        source_name=parsed.get("source"),
+        destination_name=parsed.get("destination"),
+        task_description=clean_order_text
+    )
+
+    await event_bus.publish(
+        AgentMessageEnvelope(
             source="task_planning",
             destination="simulation",
             event_type=EventType.ROBOT_ASSIGNED,
-            payload={"robot_id": assigned_id, "order": clean_order_text}
-        ))
-        await event_bus.publish(AgentMessageEnvelope(
+            payload={
+                "robot_id": assigned_id,
+                "order": clean_order_text
+            }
+        )
+    )
+
+    await event_bus.publish(
+        AgentMessageEnvelope(
             source="task_planning",
             destination="simulation",
             event_type=EventType.TASK_DISPATCHED,
-            payload={"robot_id": assigned_id, "subtasks": result_state.get("subtasks")}
-        ))
-    elif result_state.get("requires_escalation"):
-        await event_bus.publish(AgentMessageEnvelope(
-            source="task_planning",
-            destination="gateway",
-            event_type=EventType.HUMAN_ESCALATION,
-            payload={"reason": result_state.get("escalation_reason")},
-            priority=MessagePriority.HIGH
-        ))
+            payload={
+                "robot_id": assigned_id,
+                "subtasks": result_state.get("subtasks") or [],
+                "compliance": comp_check
+            }
+        )
+    )
 
+    # ---------------------------------------------------------------
+    # 12. Final response
+    #
+    # Exception Handling Agent is already connected to the telemetry
+    # lifecycle in main.py. Once the robot starts moving, telemetry
+    # anomalies are processed by ExceptionHandlingAgent.
+    # ---------------------------------------------------------------
     return {
         "success": True,
         "assigned_robot_id": assigned_id,
-        "status": result_state.get("status"),
-        "requires_escalation": result_state.get("requires_escalation"),
-        "escalation_reason": result_state.get("escalation_reason"),
-        "parsed_order": result_state.get("parsed_order"),
-        "subtasks": result_state.get("subtasks")
+        "status": "dispatched",
+        "requires_escalation": result_state.get(
+            "requires_escalation",
+            False
+        ),
+        "escalation_reason": result_state.get(
+            "escalation_reason"
+        ),
+        "parsed_order": parsed,
+        "subtasks": result_state.get("subtasks") or [],
+        "compliance": comp_check,
+        "message": (
+            "Task planned, compliance approved, "
+            "and robot dispatched successfully."
+        )
     }
 
 
