@@ -58,11 +58,14 @@ services:
     container_name: wareflow_frontend
     ports:
       - "5173:5173"
+    environment:
+      - VITE_API_PROXY_TARGET=http://app:8000
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - wareflow_net

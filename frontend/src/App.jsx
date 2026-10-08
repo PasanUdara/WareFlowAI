@@ -8,6 +8,7 @@ import {
   dispatchOrder,
   enableRobot,
   fetchEventHistory,
+  fetchActiveException,
   fetchFleetStatus,
   getAuthToken,
   injectRobotAnomaly,
@@ -15,7 +16,7 @@ import {
   triggerEmergencyStop
 } from './api';
 
-const defaultOrder = 'Move 5 pallets from Shelf A2 to Packing Station 3.';
+const defaultOrder = '';
 
 const PRESET_ORDERS = [
   { label: '📦 Standard Delivery', text: 'Move 5 pallets from Shelf A2 to Packing Station 3.' },
@@ -24,23 +25,69 @@ const PRESET_ORDERS = [
   { label: '❓ Ambiguous Order', text: 'Bring the blue box from somewhere over there' }
 ];
 
+const NAV_GROUPS = [
+  {
+    label: 'OPERATIONS',
+    items: [
+      { id: 'overview', icon: '⌂', label: 'Dashboard' },
+      { id: 'orders', icon: '⇢', label: 'Orders' },
+      { id: 'tasks', icon: '☷', label: 'Tasks' }
+    ]
+  },
+  {
+    label: 'FLEET',
+    items: [{ id: 'fleet', icon: '◉', label: 'Robots' }]
+  },
+  {
+    label: 'INTELLIGENCE',
+    items: [{ id: 'compliance', icon: '✓', label: 'Compliance' }]
+  },
+  {
+    label: 'MONITORING',
+    items: [
+      { id: 'exception', icon: '⚠', label: 'Exceptions' },
+      { id: 'events', icon: '≋', label: 'Events' }
+    ]
+  },
+  {
+    label: 'SYSTEM',
+    items: [
+      { id: 'emergency', icon: '⛑', label: 'Emergency Stop' },
+      { id: 'commercial', icon: '◇', label: 'Plans & Deployment' }
+    ]
+  }
+];
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAuthToken()));
-  const [currentUser, setCurrentUser] = useState(localStorage.getItem('wareflow_user') || 'admin');
+  const [currentUser, setCurrentUser] = useState(localStorage.getItem('wareflow_user') || '');
+  const [userRole, setUserRole] = useState(localStorage.getItem('wareflow_role') || '');
   const [activeTab, setActiveTab] = useState('overview');
 
   // Login Form State
-  const [loginUsername, setLoginUsername] = useState('admin');
-  const [loginPassword, setLoginPassword] = useState('admin123');
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState('');
 
   // Dashboard Data State
   const [fleet, setFleet] = useState([]);
-  const [emergencyStop, setEmergencyStop] = useState(false);
+  const [emergencyStop, setEmergencyStop] = useState(null);
   const [selectedRobotId, setSelectedRobotId] = useState('R1');
   const [globalError, setGlobalError] = useState('');
   const [wsStatus, setWsStatus] = useState('Disconnected');
+  const [fleetLoading, setFleetLoading] = useState(false);
+  const [fleetError, setFleetError] = useState('');
+  const [fleetHasLoaded, setFleetHasLoaded] = useState(false);
+  const [exceptionLoading, setExceptionLoading] = useState(false);
+  const [exceptionError, setExceptionError] = useState('');
+  const [eventLoading, setEventLoading] = useState(false);
+  const [eventError, setEventError] = useState('');
+  const [events, setEvents] = useState([]);
+  const [eventSearch, setEventSearch] = useState('');
+  const [taskFilter, setTaskFilter] = useState('all');
+  const [showEmergencyModal, setShowEmergencyModal] = useState(false);
+  const [emergencyBusy, setEmergencyBusy] = useState(false);
 
   // Member 2 Exception Handling State
   const [activeException, setActiveException] = useState(null);
@@ -50,6 +97,7 @@ function App() {
   const [orderText, setOrderText] = useState(defaultOrder);
   const [plan, setPlan] = useState(null);
   const [planning, setPlanning] = useState(false);
+  const [dispatchHistory, setDispatchHistory] = useState([]);
 
   // Add Robot Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -70,6 +118,7 @@ function App() {
     target_zone: 'Zone-A'
   });
   const [complianceResult, setComplianceResult] = useState(null);
+  const [complianceLoading, setComplianceLoading] = useState(false);
 
   // Agent Event Log Stream
   const [activityLogs, setActivityLogs] = useState([]);
@@ -82,7 +131,12 @@ function App() {
     const handleUnauthorized = () => {
       setIsAuthenticated(false);
       clearAuthToken();
-      setLoginError('Session expired. Please log in with demo credentials.');
+      localStorage.removeItem('wareflow_user');
+      localStorage.removeItem('wareflow_role');
+      setLoginPassword('');
+      setCurrentUser('');
+      setUserRole('');
+      setLoginError('Session expired. Please sign in again.');
     };
     window.addEventListener('wareflow_unauthorized', handleUnauthorized);
     return () => window.removeEventListener('wareflow_unauthorized', handleUnauthorized);
@@ -95,11 +149,13 @@ function App() {
     if (!isAuthenticated) return;
 
     let socket;
+    let reconnectTimer;
     let isSubscribed = true;
 
     const connectWebSocket = () => {
       try {
-        const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/telemetry';
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = import.meta.env.VITE_WS_URL || `${wsProtocol}//${window.location.host}/ws/telemetry`;
         socket = new WebSocket(wsUrl);
         wsRef.current = socket;
 
@@ -135,7 +191,9 @@ function App() {
         socket.onclose = () => {
           if (isSubscribed) {
             setWsStatus('Reconnecting...');
-            setTimeout(connectWebSocket, 3000);
+            reconnectTimer = setTimeout(connectWebSocket, 3000);
+          } else {
+            setWsStatus('Disconnected');
           }
         };
       } catch (err) {
@@ -148,37 +206,63 @@ function App() {
     // Initial HTTP fetch
     loadFleetData();
     loadEventHistory();
+    loadExceptionData();
 
     return () => {
       isSubscribed = false;
+      clearTimeout(reconnectTimer);
       if (socket) socket.close();
     };
   }, [isAuthenticated]);
 
   const loadFleetData = async () => {
+    setFleetLoading(true);
+    setFleetError('');
     try {
       const data = await fetchFleetStatus();
       setFleet(data.robots || []);
       setEmergencyStop(Boolean(data.emergency_stop));
+      setFleetHasLoaded(true);
     } catch (err) {
-      // Handled by 401 interceptor or error display
+      setFleetError(err.message || 'Unable to load robot fleet.');
+    } finally {
+      setFleetLoading(false);
+    }
+  };
+
+  const loadExceptionData = async () => {
+    setExceptionLoading(true);
+    setExceptionError('');
+    try {
+      const data = await fetchActiveException();
+      setActiveException(data.lifecycle || null);
+      setBlockedCells(data.blocked_cells || []);
+    } catch (err) {
+      setExceptionError(err.message || 'Unable to load exception lifecycle.');
+    } finally {
+      setExceptionLoading(false);
     }
   };
 
   const loadEventHistory = async () => {
+    setEventLoading(true);
+    setEventError('');
     try {
       const data = await fetchEventHistory(25);
+      setEvents(data.events || []);
       if (data.events) {
         const formatted = data.events.map((e) => ({
-          time: new Date(e.timestamp).toLocaleTimeString(),
+          time: e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '—',
           source: e.source,
           type: e.event_type,
-          summary: `${e.source} ➔ ${e.destination}: ${JSON.stringify(e.payload).substring(0, 40)}`
+          summary: `${e.source} ➔ ${e.destination}: ${JSON.stringify(e.payload).substring(0, 120)}`
         }));
         setActivityLogs(formatted);
       }
     } catch (err) {
-      // Silent catch for initial log load
+      setEventError(err.message || 'Unable to load event history.');
+    } finally {
+      setEventLoading(false);
     }
   };
 
@@ -186,15 +270,25 @@ function App() {
   // Computed Summaries
   // ---------------------------------------------------------------------------
   const fleetSummary = useMemo(() => {
-    const total = fleet.length || 4;
+    const total = fleet.length;
     const moving = fleet.filter((r) => String(r.state).toUpperCase() === 'MOVING').length;
     const charging = fleet.filter((r) => String(r.state).toUpperCase() === 'CHARGING').length;
+    const available = fleet.filter((r) => String(r.state).toUpperCase() === 'IDLE' && r.enabled !== false).length;
     const attention = fleet.filter(
-      (r) => Number(r.battery) < 25 || ['ERROR', 'STUCK'].includes(String(r.state).toUpperCase()) || r.enabled === false
+      (r) => (r.battery !== null && r.battery !== undefined && Number.isFinite(Number(r.battery)) && Number(r.battery) < 25)
+        || ['ERROR', 'STUCK'].includes(String(r.state).toUpperCase())
+        || r.enabled === false
     ).length;
-    const avgBattery = total ? Math.round(fleet.reduce((sum, r) => sum + Number(r.battery || 0), 0) / total) : 100;
-    return { total, moving, charging, attention, avgBattery };
-  }, [fleet]);
+    const batteries = fleet.map((r) => Number(r.battery)).filter(Number.isFinite);
+    const avgBattery = batteries.length
+      ? Math.round(batteries.reduce((sum, battery) => sum + battery, 0) / batteries.length)
+      : null;
+    const activeTaskCount = fleet.filter((r) => Boolean(r.current_task)).length;
+    const exceptionActive = activeException
+      ? ['DETECTED', 'ANALYZING', 'RECOVERING'].includes(activeException.status)
+      : null;
+    return { total, moving, charging, available, attention, avgBattery, activeTaskCount, exceptionActive };
+  }, [fleet, activeException]);
 
   const selectedRobot = useMemo(() => {
     return fleet.find((r) => r.robot_id === selectedRobotId) || fleet[0] || null;
@@ -219,7 +313,10 @@ function App() {
       const data = await loginUser(userToLogin.trim(), passToLogin.trim());
       setIsAuthenticated(true);
       setCurrentUser(data.username);
+      setUserRole(data.role || '');
+      setLoginPassword('');
       localStorage.setItem('wareflow_user', data.username);
+      if (data.role) localStorage.setItem('wareflow_role', data.role);
       setGlobalError('');
     } catch (err) {
       setLoginError(err.message || 'Invalid username or password.');
@@ -231,7 +328,12 @@ function App() {
   const handleLogout = () => {
     clearAuthToken();
     localStorage.removeItem('wareflow_user');
+    localStorage.removeItem('wareflow_role');
     setIsAuthenticated(false);
+    setLoginPassword('');
+    setCurrentUser('');
+    setUserRole('');
+    setActiveTab('overview');
   };
 
   const handleDispatchOrder = async (e) => {
@@ -245,9 +347,12 @@ function App() {
     try {
       const result = await dispatchOrder({ order_text: orderText.trim() });
       setPlan(result);
+      setDispatchHistory((previous) => [
+        { id: `${Date.now()}`, orderText: orderText.trim(), result, createdAt: new Date().toISOString() },
+        ...previous
+      ]);
       if (result.assigned_robot_id) {
         setSelectedRobotId(result.assigned_robot_id);
-        setActiveTab('overview');
       }
       addActivityLog('Gateway', 'ORDER_DISPATCH', `Dispatched: "${orderText.substring(0, 30)}..."`);
       await loadEventHistory();
@@ -259,18 +364,18 @@ function App() {
   };
 
   const handleToggleEmergencyStop = async (resume = false) => {
-    const actionName = resume ? 'Resume Fleet Movement' : 'Global Emergency Stop';
-    if (!window.confirm(`Are you sure you want to trigger: ${actionName}?`)) {
-      return;
-    }
-
+    setEmergencyBusy(true);
     try {
       const result = await triggerEmergencyStop(resume);
       setEmergencyStop(Boolean(result.emergency_stop));
       addActivityLog('Gateway', resume ? 'SYSTEM_RESUMED' : 'EMERGENCY_STOP', result.message);
+      setShowEmergencyModal(false);
       await loadFleetData();
+      await loadEventHistory();
     } catch (err) {
       setGlobalError(err.message || 'Emergency control request failed.');
+    } finally {
+      setEmergencyBusy(false);
     }
   };
 
@@ -344,12 +449,16 @@ function App() {
   const handleCheckCompliance = async (e) => {
     e.preventDefault();
     setGlobalError('');
+    setComplianceLoading(true);
     try {
       const res = await checkCompliance(complianceForm);
       setComplianceResult(res);
       addActivityLog('ComplianceAgent', res.is_compliant ? 'COMPLIANCE_APPROVED' : 'COMPLIANCE_REJECTED', `Zone: ${complianceForm.target_zone}`);
+      await loadEventHistory();
     } catch (err) {
       setGlobalError(err.message || 'Compliance verification unavailable.');
+    } finally {
+      setComplianceLoading(false);
     }
   };
 
@@ -363,6 +472,45 @@ function App() {
     setActivityLogs((prev) => [newEntry, ...prev.slice(0, 24)]);
   };
 
+  const activePage = NAV_GROUPS.flatMap((group) => group.items).find((item) => item.id === activeTab);
+  const exceptionStatusLabel = activeException?.status || (exceptionLoading ? 'LOADING' : 'UNAVAILABLE');
+  const visibleEvents = events.filter((event) => {
+    const query = eventSearch.trim().toLowerCase();
+    if (!query) return true;
+    return [
+      event.event_type,
+      event.source,
+      event.destination,
+      event.correlation_id,
+      JSON.stringify(event.payload || {})
+    ].some((value) => String(value || '').toLowerCase().includes(query));
+  });
+  const liveTaskRows = fleet
+    .filter((robot) => robot.current_task)
+    .map((robot) => ({
+      id: `${robot.robot_id}-live`,
+      taskId: robot.current_task,
+      robotId: robot.robot_id,
+      status: String(robot.state || 'unknown').toLowerCase(),
+      description: robot.current_task,
+      createdAt: null,
+      origin: 'Live telemetry'
+    }));
+  const recentDispatchRows = dispatchHistory
+    .map((entry) => ({
+      id: entry.id,
+      taskId: entry.result.task_id || 'Dispatch response',
+      robotId: entry.result.assigned_robot_id || 'Unassigned',
+      status: String(entry.result.status || 'unknown').toLowerCase(),
+      description: entry.orderText,
+      createdAt: entry.createdAt,
+      origin: 'API dispatch response'
+    }));
+  const visibleTaskRows = [...liveTaskRows, ...recentDispatchRows].filter((task) => {
+    if (taskFilter === 'all') return true;
+    return task.status === taskFilter || (taskFilter === 'running' && task.status === 'moving');
+  });
+
   // ---------------------------------------------------------------------------
   // 1. LOGIN SCREEN (Unauthenticated View)
   // ---------------------------------------------------------------------------
@@ -373,7 +521,7 @@ function App() {
           <div className="login-brand">
             <div className="brand-mark">WF</div>
             <h2>WareFlow AI</h2>
-            <p>Autonomous Warehouse AMR Control Center</p>
+            <p>Warehouse Operations Control Center</p>
           </div>
 
           {loginError && (
@@ -389,8 +537,9 @@ function App() {
                 type="text"
                 value={loginUsername}
                 onChange={(e) => setLoginUsername(e.target.value)}
-                placeholder="admin or operator"
+                placeholder="Enter your username"
                 required
+                autoComplete="username"
               />
             </label>
 
@@ -400,8 +549,9 @@ function App() {
                 type="password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="admin123 or operator123"
+                placeholder="Enter your password"
                 required
+                autoComplete="current-password"
               />
             </label>
 
@@ -410,27 +560,7 @@ function App() {
             </button>
           </form>
 
-          <div className="demo-credentials-box">
-            <small>💡 Quick Demo Credentials:</small>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-              <button
-                type="button"
-                className="secondary-button"
-                style={{ flex: 1, fontSize: '11px', padding: '6px' }}
-                onClick={() => handleLogin(null, 'admin', 'admin123')}
-              >
-                Login as Admin (admin / admin123)
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                style={{ flex: 1, fontSize: '11px', padding: '6px' }}
-                onClick={() => handleLogin(null, 'operator', 'operator123')}
-              >
-                Login as Operator (operator / operator123)
-              </button>
-            </div>
-          </div>
+          <p className="login-footnote">Sign in with an account configured by your WareFlow administrator.</p>
         </div>
       </div>
     );
@@ -451,31 +581,36 @@ function App() {
           </div>
         </div>
 
-        <nav className="nav-list">
-          <button className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>
-            <i>⌂</i> Overview
-          </button>
-          <button className={`nav-item ${activeTab === 'planning' ? 'active' : ''}`} onClick={() => setActiveTab('planning')}>
-            <i>✦</i> Task Planner <small className="badge-member">M1</small>
-          </button>
-          <button className={`nav-item ${activeTab === 'exception' ? 'active' : ''}`} onClick={() => setActiveTab('exception')}>
-            <i>⚠️</i> Exception Recovery <small className="badge-member">M2</small>
-          </button>
-          <button className={`nav-item ${activeTab === 'fleet' ? 'active' : ''}`} onClick={() => setActiveTab('fleet')}>
-            <i>◉</i> Fleet Command <small className="badge-member">M4</small>
-          </button>
-          <button className={`nav-item ${activeTab === 'compliance' ? 'active' : ''}`} onClick={() => setActiveTab('compliance')}>
-            <i>✓</i> Compliance RAG <small className="badge-member">M3</small>
-          </button>
+        <nav className="nav-list" aria-label="Main navigation">
+          {NAV_GROUPS.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <span className="nav-group-label">{group.label}</span>
+              {group.items.map((item) => (
+                <button
+                  key={item.id}
+                  className={`nav-item ${activeTab === item.id ? 'active' : ''} ${item.id === 'emergency' ? 'nav-emergency' : ''}`}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    if (item.id === 'events') loadEventHistory();
+                    if (item.id === 'exception') loadExceptionData();
+                  }}
+                  aria-current={activeTab === item.id ? 'page' : undefined}
+                >
+                  <i aria-hidden="true">{item.icon}</i>{item.label}
+                  {item.id === 'events' && events.length > 0 && <small className="nav-count">{events.length}</small>}
+                </button>
+              ))}
+            </div>
+          ))}
         </nav>
 
         <div className="sidebar-footer">
           <div className="user-profile">
-            <span>👤 User: <strong>{currentUser}</strong></span>
+            <span>👤 <strong>{currentUser}</strong>{userRole && <small className="role-label">{userRole}</small>}</span>
             <button className="text-button" onClick={handleLogout}>Sign Out</button>
           </div>
           <div className="system-status-indicator">
-            <span className={`pulse-dot ${emergencyStop ? 'critical' : 'healthy'}`} />
+            <span className={`pulse-dot ${emergencyStop ? 'critical' : wsStatus === 'Connected' ? 'healthy' : 'offline'}`} />
             WS: {wsStatus}
           </div>
         </div>
@@ -485,22 +620,25 @@ function App() {
       <main className="workspace">
         <header className="topbar">
           <div>
-            <p className="overline">Operations / <span className="tab-highlight">{activeTab.toUpperCase()}</span></p>
-            <h1>Warehouse Command Center</h1>
+            <p className="overline">WAREHOUSE OPERATIONS / <span className="tab-highlight">{activePage?.label || 'Dashboard'}</span></p>
+            <h1>{activePage?.label === 'Dashboard' ? 'Warehouse Command Center' : activePage?.label}</h1>
           </div>
 
           <div className="header-actions">
-            <button className="icon-button" onClick={loadFleetData} title="Refresh Telemetry">↻</button>
+            <button className="icon-button" onClick={() => { loadFleetData(); loadEventHistory(); }} title="Refresh fleet and events" aria-label="Refresh fleet and events">↻</button>
+            <button className="icon-button notification-button" onClick={() => { setActiveTab('events'); loadEventHistory(); }} title="View event notifications" aria-label="View event notifications">
+              🔔{events.length > 0 && <span className="notification-dot" />}
+            </button>
             <button className="icon-button" onClick={handleLogout} title="Sign Out / Switch User">🔒</button>
-            <span className={`system-badge ${emergencyStop ? 'critical' : 'online'}`}>
-              <b /> {emergencyStop ? 'EMERGENCY STOPPED' : 'FLEET ONLINE'}
+            <span className={`system-badge ${emergencyStop || wsStatus !== 'Connected' ? 'critical' : 'online'}`}>
+              <b /> {wsStatus === 'Connected' ? 'LIVE' : wsStatus.toUpperCase()}
             </span>
             {emergencyStop ? (
-              <button onClick={() => handleToggleEmergencyStop(true)} className="stop-button resume">
+              <button onClick={() => handleToggleEmergencyStop(true)} className="stop-button resume" disabled={emergencyBusy}>
                 ▶ Resume Fleet
               </button>
             ) : (
-              <button onClick={() => handleToggleEmergencyStop(false)} className="stop-button stop">
+              <button onClick={() => setShowEmergencyModal(true)} className="stop-button stop">
                 🛑 EMERGENCY STOP
               </button>
             )}
@@ -513,42 +651,208 @@ function App() {
             <button onClick={() => setGlobalError('')}>×</button>
           </div>
         )}
+        {activeTab === 'overview' && fleetError && (
+          <div className="notice error">
+            <span>{fleetError}</span>
+            <button className="text-button" onClick={loadFleetData}>Retry</button>
+          </div>
+        )}
 
         {/* METRICS STRIP */}
-        <section className="metric-grid">
+        {activeTab === 'overview' && <section className="metric-grid">
           <div className="metric cyan">
             <div className="metric-icon">🤖</div>
             <div>
-              <span>Fleet Online</span>
-              <strong>{fleetSummary.total} AMRs</strong>
-              <small>Connected to Grid</small>
+              <span>Total Robots</span>
+              <strong>{fleetLoading ? '…' : fleetHasLoaded ? fleetSummary.total : '—'}</strong>
+              <small>Live fleet telemetry</small>
             </div>
           </div>
           <div className="metric violet">
             <div className="metric-icon">↗</div>
             <div>
-              <span>Active Tasks</span>
-              <strong>{fleetSummary.moving} Moving</strong>
-              <small>{fleetSummary.charging} Charging</small>
+              <span>Moving Robots</span>
+              <strong>{fleetLoading ? '…' : fleetHasLoaded ? fleetSummary.moving : '—'}</strong>
+              <small>Current simulation state</small>
             </div>
           </div>
           <div className="metric lime">
             <div className="metric-icon">⚡</div>
             <div>
-              <span>Average Battery</span>
-              <strong>{fleetSummary.avgBattery}%</strong>
-              <small>Fleet Charge Level</small>
+              <span>Available Robots</span>
+              <strong>{fleetLoading ? '…' : fleetHasLoaded ? fleetSummary.available : '—'}</strong>
+              <small>Idle and enabled</small>
+            </div>
+          </div>
+          <div className="metric cyan">
+            <div className="metric-icon">▤</div>
+            <div>
+              <span>Active Tasks</span>
+              <strong>{fleetLoading ? '…' : fleetHasLoaded ? fleetSummary.activeTaskCount : '—'}</strong>
+              <small>Reported by robot telemetry</small>
             </div>
           </div>
           <div className="metric orange">
             <div className="metric-icon">⚠️</div>
             <div>
-              <span>Alerts / Disabled</span>
-              <strong>{fleetSummary.attention} Units</strong>
-              <small>Needs Attention</small>
+              <span>Active Exceptions</span>
+              <strong>{exceptionLoading ? '…' : activeException ? (fleetSummary.exceptionActive ? 1 : 0) : '—'}</strong>
+              <small>{fleetSummary.attention} robots need attention</small>
             </div>
           </div>
-        </section>
+          <div className={`metric ${complianceResult ? (complianceResult.is_compliant ? 'lime' : 'orange') : 'violet'}`}>
+            <div className="metric-icon">✓</div>
+            <div>
+              <span>Latest Compliance</span>
+              <strong>{complianceResult ? (complianceResult.is_compliant ? 'PASS' : 'FAIL') : '—'}</strong>
+              <small>{complianceResult ? 'Last check result' : 'No check run this session'}</small>
+            </div>
+          </div>
+        </section>}
+
+        {activeTab === 'tasks' && (
+          <section className="tab-view fade-in">
+            <div className="section-title-box">
+              <span className="member-tag">Live data</span>
+              <h2>Task Monitoring</h2>
+              <p>Robot task assignments come from live telemetry. Recent dispatch results are held in this browser session; this backend does not provide a durable task-list endpoint.</p>
+            </div>
+            <div className="card">
+              <div className="card-header task-header">
+                <div>
+                  <p className="overline">TASKS FROM LIVE DATA</p>
+                  <h3>Assignments & Dispatch Results</h3>
+                </div>
+                <button className="glow-button" onClick={() => setActiveTab('orders')}>+ Create Order</button>
+              </div>
+              <div className="filter-row" role="group" aria-label="Filter tasks">
+                {['all', 'pending', 'running', 'completed', 'failed'].map((filter) => (
+                  <button key={filter} className={`filter-chip ${taskFilter === filter ? 'selected' : ''}`} onClick={() => setTaskFilter(filter)}>
+                    {filter[0].toUpperCase() + filter.slice(1)}
+                  </button>
+                ))}
+              </div>
+              {fleetError && <div className="notice error">{fleetError}<button className="text-button" onClick={loadFleetData}>Retry</button></div>}
+              {eventError && <div className="notice error">{eventError}<button className="text-button" onClick={loadEventHistory}>Retry</button></div>}
+              <div className="table-wrap">
+                <table className="fleet-table operations-table">
+                  <thead><tr><th>Task / Response</th><th>Description</th><th>Robot</th><th>Status</th><th>Source</th><th>Recorded</th></tr></thead>
+                  <tbody>
+                    {visibleTaskRows.map((task) => (
+                      <tr key={task.id}>
+                        <td><strong>{task.taskId}</strong></td>
+                        <td>{task.description}</td>
+                        <td>{task.robotId}</td>
+                        <td><span className={`state-badge ${task.status}`}>{task.status}</span></td>
+                        <td>{task.origin}</td>
+                        <td>{task.createdAt ? new Date(task.createdAt).toLocaleString() : 'Live'}</td>
+                      </tr>
+                    ))}
+                    {!fleetLoading && !visibleTaskRows.length && (
+                      <tr><td colSpan="6" className="empty-cell">
+                        {fleet.length ? 'No matching task assignments are currently reported.' : 'Fleet data is not available yet.'}
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'events' && (
+          <section className="tab-view fade-in">
+            <div className="section-title-box">
+              <span className="member-tag">Event Bus</span>
+              <h2>Event History</h2>
+              <p>Audit-style view of messages returned by the backend EventBus history API.</p>
+            </div>
+            <div className="card">
+              <div className="card-header">
+                <div><p className="overline">BACKEND EVENT HISTORY</p><h3>{events.length} recent events</h3></div>
+                <button className="secondary-button refresh-events" onClick={loadEventHistory} disabled={eventLoading}>{eventLoading ? 'Loading…' : '↻ Refresh events'}</button>
+              </div>
+              <label className="search-field">
+                <span className="visually-hidden">Search events</span>
+                <input value={eventSearch} onChange={(e) => setEventSearch(e.target.value)} placeholder="Search event type, agent, payload…" />
+              </label>
+              {eventError && <div className="notice error">{eventError}<button className="text-button" onClick={loadEventHistory}>Retry</button></div>}
+              {eventLoading && <p className="empty-state">Loading event history…</p>}
+              {!eventLoading && !eventError && (
+                <div className="event-table">
+                  {visibleEvents.map((event) => (
+                    <article className="event-entry" key={event.message_id || `${event.timestamp}-${event.event_type}`}>
+                      <div className="event-entry-meta">
+                        <span className={`priority-badge ${String(event.priority || 'normal').toLowerCase()}`}>{event.priority || 'normal'}</span>
+                        <time>{event.timestamp ? new Date(event.timestamp).toLocaleString() : 'Timestamp unavailable'}</time>
+                      </div>
+                      <div className="event-entry-main">
+                        <strong>{event.event_type || 'Unknown event'}</strong>
+                        <span>{event.source || 'unknown source'} → {event.destination || 'unknown destination'}</span>
+                      </div>
+                      <details>
+                        <summary>View event payload</summary>
+                        <pre>{JSON.stringify(event.payload || {}, null, 2)}</pre>
+                      </details>
+                    </article>
+                  ))}
+                  {!visibleEvents.length && <p className="empty-state">{events.length ? 'No events match this search.' : 'No event records were returned by the API.'}</p>}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'emergency' && (
+          <section className="tab-view fade-in">
+            <div className="section-title-box">
+              <span className="member-tag">Safety control</span>
+              <h2>Emergency Stop</h2>
+              <p>Use the backend emergency control to halt or resume robot movement. This action is shared across the running simulation.</p>
+            </div>
+            <div className={`card emergency-control-card ${emergencyStop ? 'is-stopped' : ''}`}>
+              <div className="emergency-state-icon">{emergencyStop ? '■' : '!'}</div>
+              <div>
+                <p className="overline">SYSTEM CONTROL</p>
+                <h3>{emergencyStop === true ? 'EMERGENCY STOP ACTIVE' : emergencyStop === false && fleetHasLoaded ? 'Fleet operations are enabled' : 'Backend status unavailable'}</h3>
+                <p>{emergencyStop === true ? 'Robot movement is halted by the backend simulation.' : emergencyStop === false && fleetHasLoaded ? 'An emergency stop immediately halts robot movement in the backend simulation.' : 'The backend has not returned the current emergency-stop state. You can still issue the stop command if needed.'}</p>
+                {emergencyStop
+                  ? <button className="stop-button resume" disabled={emergencyBusy} onClick={() => handleToggleEmergencyStop(true)}>{emergencyBusy ? 'Resuming…' : '▶ Resume System'}</button>
+                  : <button className="stop-button stop emergency-action" onClick={() => setShowEmergencyModal(true)}>🛑 Stop all robots</button>}
+              </div>
+            </div>
+            <div className="card margin-top"><h3>Control status</h3><p className="subtle-text">Backend-reported status: <strong>{emergencyStop === null ? 'Unavailable' : emergencyStop ? 'Stopped' : 'Running'}</strong>. WebSocket: <strong>{wsStatus}</strong>.</p></div>
+          </section>
+        )}
+
+        {activeTab === 'commercial' && (
+          <section className="tab-view fade-in">
+            <div className="section-title-box">
+              <span className="member-tag">Product information</span>
+              <h2>Plans & Deployment</h2>
+              <p>Proposed Commercial Pricing — illustrative university-project pricing, not actual market revenue or a production offer.</p>
+            </div>
+            <div className="pricing-grid">
+              {[
+                { name: 'Research / Demo', price: 'LKR 0', note: 'For coursework and evaluation', features: ['Basic simulation', 'Limited robots', 'Demonstration features'] },
+                { name: 'Starter', price: 'LKR 25,000', period: '/ month', note: 'Proposed pricing', features: ['Web dashboard', 'Basic task planning', 'Robot monitoring', 'Basic compliance'] },
+                { name: 'Professional', price: 'LKR 75,000', period: '/ month', note: 'Proposed pricing', features: ['Multi-agent coordination', 'RAG / SOP compliance', 'Exception handling', 'Real-time telemetry and event history'] },
+                { name: 'Enterprise', price: 'Custom', note: 'Proposed pricing', features: ['Private or on-premise deployment', 'Large robot fleets', 'Custom API integrations', 'Custom workflows and support'] }
+              ].map((tier) => (
+                <article className="card pricing-card" key={tier.name}>
+                  <p className="overline">{tier.note}</p><h3>{tier.name}</h3>
+                  <strong className="price">{tier.price}</strong>{tier.period && <span className="price-period">{tier.period}</span>}
+                  <ul>{tier.features.map((feature) => <li key={feature}>{feature}</li>)}</ul>
+                </article>
+              ))}
+            </div>
+            <div className="commercial-grid">
+              <div className="card"><p className="overline">TARGET MARKETS</p><h3>Who it serves</h3><div className="tag-list">{['Logistics companies', 'E-commerce fulfilment', 'Distribution centres', 'Manufacturing warehouses', '3PL companies'].map((market) => <span key={market}>{market}</span>)}</div></div>
+              <div className="card"><p className="overline">DEPLOYMENT MODELS</p><h3>Deployment options (proposed)</h3><div className="deployment-list">{[['Cloud SaaS', 'Managed application and service hosting'], ['On-Premise', 'Customer-managed infrastructure'], ['Hybrid', 'Cloud management with local operations']].map(([name, detail]) => <div key={name}><strong>{name}</strong><span>{detail}</span></div>)}</div></div>
+            </div>
+            <div className="card product-positioning"><p className="overline">PRODUCT POSITIONING</p><p>WareFlow AI is an AI-powered warehouse operations and robot fleet coordination platform that integrates task planning, SOP compliance, exception handling, telemetry monitoring and human oversight into a unified control centre.</p><small>WareFlow AI is software for coordinating and managing warehouse robot fleets; it does not manufacture robots.</small></div>
+          </section>
+        )}
 
         {/* TAB 1: OVERVIEW & MAP */}
         {activeTab === 'overview' && (
@@ -636,9 +940,9 @@ function App() {
 
                     <div className="telemetry-rows">
                       <div className="t-row"><span>Robot ID</span><strong>{selectedRobot.robot_id}</strong></div>
-                      <div className="t-row"><span>Position</span><strong>X: {selectedRobot.x ?? selectedRobot.position?.[0]}, Y: {selectedRobot.y ?? selectedRobot.position?.[1]}</strong></div>
-                      <div className="t-row"><span>Battery Level</span><strong>{selectedRobot.battery}%</strong></div>
-                      <div className="t-row"><span>Current Task</span><strong>{selectedRobot.current_task || 'None (Idle)'}</strong></div>
+                      <div className="t-row"><span>Position</span><strong>X: {selectedRobot.x ?? selectedRobot.position?.[0] ?? 'Not provided'}, Y: {selectedRobot.y ?? selectedRobot.position?.[1] ?? 'Not provided'}</strong></div>
+                      <div className="t-row"><span>Battery Level</span><strong>{selectedRobot.battery === null || selectedRobot.battery === undefined ? 'Not provided' : `${selectedRobot.battery}%`}</strong></div>
+                      <div className="t-row"><span>Current Task</span><strong>{selectedRobot.current_task || 'No task reported'}</strong></div>
                       <div className="t-row"><span>Operational Status</span><strong>{selectedRobot.enabled !== false ? 'Enabled' : 'Disabled'}</strong></div>
                       <div className="t-row"><span>Route Status</span><strong>{selectedRobot.is_rerouted ? '⚠️ Detoured (A*)' : selectedRobot.waypoints?.length ? 'Active Route' : 'Idle'}</strong></div>
                     </div>
@@ -706,7 +1010,7 @@ function App() {
                   <p className="overline">AUTONOMOUS EXCEPTION HANDLING & RECOVERY ENGINE</p>
                   <h3>Active Anomaly & Recovery Lifecycle</h3>
                 </div>
-                <span className={`status-pill-lg ${(activeException?.status || 'IDLE').toLowerCase()}`} style={{
+                <span className={`status-pill-lg ${exceptionStatusLabel.toLowerCase()}`} style={{
                   padding: '6px 14px',
                   borderRadius: '20px',
                   font: '11px "DM Mono", monospace',
@@ -714,7 +1018,7 @@ function App() {
                   color: '#fff',
                   border: '1px solid rgba(255,255,255,0.2)'
                 }}>
-                  {activeException?.status || 'IDLE'}
+                  {exceptionStatusLabel}
                 </span>
               </div>
 
@@ -733,6 +1037,8 @@ function App() {
                 </div>
               </div>
 
+              {exceptionError && <div className="notice error">{exceptionError}<button className="text-button" onClick={loadExceptionData}>Retry</button></div>}
+              {exceptionLoading && <p className="empty-state">Loading exception lifecycle…</p>}
               {activeException?.anomaly ? (
                 <div className="recovery-details-box">
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
@@ -745,28 +1051,28 @@ function App() {
                     <div>
                       <span style={{ color: '#94a3b8', fontSize: '11px' }}>SEVERITY:</span>
                       <div style={{ fontWeight: 700, color: activeException.anomaly.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b' }}>
-                        {activeException.anomaly.severity || 'HIGH'}
+                        {activeException.anomaly.severity || 'Not provided'}
                       </div>
                     </div>
                     <div>
                       <span style={{ color: '#94a3b8', fontSize: '11px' }}>RECOVERY DECISION:</span>
                       <div style={{ fontWeight: 700, color: '#38bdf8' }}>
-                        {activeException.recovery?.action_type || 'Analyzing recovery directive...'}
+                        {activeException.recovery?.action_type || 'No recovery action returned yet'}
                       </div>
                     </div>
                     <div>
                       <span style={{ color: '#94a3b8', fontSize: '11px' }}>RECOVERY DIRECTIVE:</span>
                       <div style={{ fontSize: '12px', color: '#cbd5e1' }}>
-                        {activeException.recovery?.notes || 'Calculating optimal A* detour...'}
+                        {activeException.recovery?.notes || 'No recovery notes returned yet'}
                       </div>
                     </div>
                   </div>
                 </div>
-              ) : (
+              ) : !exceptionLoading && !exceptionError ? (
                 <div className="recovery-details-box" style={{ color: '#94a3b8', fontSize: '11px' }}>
-                  ✓ Fleet operating normally. Select an AMR and click "⚠️ Inject Stuck", "🪫 Low Battery", or "🚧 Block Path" to test autonomous recovery.
+                  No active exception is reported. Use the simulation controls to exercise the recovery workflow.
                 </div>
-              )}
+              ) : null}
             </div>
             {/* Agent Activity / Event Log Stream */}
             <div className="card margin-top">
@@ -794,12 +1100,12 @@ function App() {
         )}
 
         {/* TAB 2: TASK PLANNER */}
-        {activeTab === 'planning' && (
+        {(activeTab === 'orders' || activeTab === 'planning') && (
           <div className="tab-view fade-in">
             <div className="section-title-box">
               <span className="member-tag">Member 1 Agent</span>
-              <h2>Task Planning Agent — LangGraph Ingestion</h2>
-              <p>Parses natural language commands, splits subtasks, and assigns available AMRs.</p>
+              <h2>Create Warehouse Order</h2>
+              <p>Submit a natural-language instruction to the existing planning and dispatch API. The backend response is shown below.</p>
             </div>
 
             <div className="planner-workspace">
@@ -816,6 +1122,7 @@ function App() {
                 <form onSubmit={handleDispatchOrder}>
                   <textarea
                     rows={4}
+                    maxLength={500}
                     value={orderText}
                     onChange={(e) => setOrderText(e.target.value)}
                     placeholder="e.g. Move 5 pallets from Shelf A2 to Packing Station 3."
@@ -823,7 +1130,7 @@ function App() {
                   />
                   <div className="planner-submit-bar">
                     <span className="char-count">{orderText.length}/500 chars</span>
-                    <button type="submit" className="glow-button" disabled={planning}>
+                    <button type="submit" className="glow-button" disabled={planning || !orderText.trim()}>
                       {planning ? 'Running LangGraph Planner...' : '⚡ Dispatch Task'}
                     </button>
                   </div>
@@ -839,12 +1146,34 @@ function App() {
 
                   {plan.parsed_order && (
                     <div className="parsed-entities">
-                      <div className="entity"><span>Item:</span> <strong>{plan.parsed_order.item || 'Cartons'}</strong></div>
-                      <div className="entity"><span>Qty:</span> <strong>{plan.parsed_order.quantity || 1}</strong></div>
-                      <div className="entity"><span>Route:</span> <strong>{plan.parsed_order.source} ➔ {plan.parsed_order.destination}</strong></div>
+                      <div className="entity"><span>Item:</span> <strong>{plan.parsed_order.item || 'Not returned'}</strong></div>
+                      <div className="entity"><span>Qty:</span> <strong>{plan.parsed_order.quantity ?? 'Not returned'}</strong></div>
+                      <div className="entity"><span>Route:</span> <strong>{plan.parsed_order.source || 'Not returned'} ➔ {plan.parsed_order.destination || 'Not returned'}</strong></div>
                       <div className="entity"><span>Assigned AMR:</span> <strong className="highlight-amr">{plan.assigned_robot_id || 'None'}</strong></div>
                     </div>
                   )}
+
+                  <div className="workflow-progress" aria-label="Order processing evidence">
+                    {[
+                      ['Order received', true, 'Dispatch API accepted the request'],
+                      ['Order parsed', Boolean(plan.parsed_order), plan.parsed_order ? 'Parsed entities returned by planner' : 'No parsed order returned'],
+                      ['Tasks decomposed', Boolean(plan.subtasks?.length), plan.subtasks?.length ? `${plan.subtasks.length} subtasks returned` : 'No subtasks returned'],
+                      ['Compliance', null, 'Inspect the Event History for the backend compliance event'],
+                      ['Robot assignment', Boolean(plan.assigned_robot_id), plan.assigned_robot_id || 'No robot assigned'],
+                      ['Execution', ['assigned', 'running', 'completed'].includes(String(plan.status).toLowerCase()), `API status: ${plan.status || 'not provided'}`]
+                    ].map(([label, complete, detail], index) => (
+                      <div className={`workflow-step ${complete === null ? 'unknown' : complete ? 'complete' : 'incomplete'}`} key={label}>
+                        <span>{complete === null ? 'i' : complete ? '✓' : index + 1}</span>
+                        <div><strong>{label}</strong><small>{detail}</small></div>
+                      </div>
+                    ))}
+                  </div>
+                  {plan.requires_escalation && (
+                    <div className="notice warning-notice">
+                      <strong>Human review required.</strong> {plan.escalation_reason || 'The planner requested operator review.'}
+                    </div>
+                  )}
+                  <button className="text-button" onClick={() => { setActiveTab('events'); loadEventHistory(); }}>View related backend events →</button>
 
                   {plan.subtasks && (
                     <div className="subtask-timeline">
@@ -932,7 +1261,7 @@ function App() {
                   <ul style={{ margin: 0, paddingLeft: '18px', color: '#cbd5e1', fontSize: '12px', lineHeight: '1.8' }}>
                     <li><strong>ROBOT_STUCK (Stall &gt; 10s):</strong> Evaluates obstacle map ➔ Calculates dynamic A* detour avoiding blocked cells ➔ Resumes movement.</li>
                     <li><strong>LOW_BATTERY (&lt; 15%):</strong> Aborts current task ➔ Finds closest warehouse charger via Manhattan distance ➔ Routes to dock.</li>
-                    <li><strong>PATH_BLOCKED / MOTOR_STALL:</strong> Escalates to human operator ➔ Logs critical audit envelope ➔ Broadcasts event.</li>
+                    <li><strong>PATH_BLOCKED / MOTOR_STALL:</strong> Recovery behavior depends on the backend agent decision; inspect the returned lifecycle and event history.</li>
                   </ul>
                 </div>
               </div>
@@ -943,17 +1272,18 @@ function App() {
                     <p className="overline">ACTIVE LIFECYCLE</p>
                     <h3>Recovery Pipeline Status</h3>
                   </div>
-                  <span className={`status-pill-lg ${(activeException?.status || 'IDLE').toLowerCase()}`} style={{
+                  <span className={`status-pill-lg ${exceptionStatusLabel.toLowerCase()}`} style={{
                     padding: '4px 10px',
                     borderRadius: '12px',
                     font: '10px "DM Mono", monospace',
                     background: activeException?.status === 'RECOVERING' ? '#1d4ed8' : activeException?.status === 'RESOLVED' ? '#047857' : activeException?.status === 'DETECTED' ? '#b91c1c' : '#1e293b',
                     color: '#fff'
                   }}>
-                    {activeException?.status || 'IDLE'}
+                    {exceptionStatusLabel}
                   </span>
                 </div>
 
+                {exceptionError && <div className="notice error">{exceptionError}<button className="text-button" onClick={loadExceptionData}>Retry</button></div>}
                 <div className="exception-stepper">
                   <div className={`step-badge ${['DETECTED', 'ANALYZING', 'RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step' : ''}`}>
                     1. DETECTED
@@ -973,13 +1303,15 @@ function App() {
                   <div className="telemetry-rows" style={{ marginTop: '16px' }}>
                     <div className="t-row"><span>Affected AMR</span><strong>{activeException.anomaly.robot_id}</strong></div>
                     <div className="t-row"><span>Anomaly Type</span><strong style={{ color: '#f87171' }}>{activeException.anomaly.event_type || activeException.anomaly.anomaly_type}</strong></div>
-                    <div className="t-row"><span>Severity</span><strong>{activeException.anomaly.severity || 'HIGH'}</strong></div>
-                    <div className="t-row"><span>Decision</span><strong style={{ color: '#38bdf8' }}>{activeException.recovery?.action_type || 'Analyzing...'}</strong></div>
-                    <div className="t-row"><span>Action Notes</span><small style={{ color: '#94a3b8' }}>{activeException.recovery?.notes || 'Executing...'}</small></div>
+                    <div className="t-row"><span>Severity</span><strong>{activeException.anomaly.severity || 'Not provided'}</strong></div>
+                    <div className="t-row"><span>Decision</span><strong style={{ color: '#38bdf8' }}>{activeException.recovery?.action_type || 'No recovery action returned yet'}</strong></div>
+                    <div className="t-row"><span>Action Notes</span><small style={{ color: '#94a3b8' }}>{activeException.recovery?.notes || 'No recovery notes returned yet'}</small></div>
                   </div>
-                ) : (
+                ) : exceptionLoading ? (
+                  <p className="empty-state">Loading exception lifecycle…</p>
+                ) : exceptionError ? null : (
                   <p className="overline" style={{ marginTop: '20px' }}>
-                    No exception currently active. All fleet units healthy.
+                    No active exception is currently reported by the simulation.
                   </p>
                 )}
               </div>
@@ -1014,6 +1346,7 @@ function App() {
                       <th>BATTERY</th>
                       <th>POSITION</th>
                       <th>CURRENT TASK</th>
+                      <th>LAST TELEMETRY</th>
                       <th>CAPABILITIES</th>
                       <th>ACTION</th>
                     </tr>
@@ -1021,18 +1354,19 @@ function App() {
                   <tbody>
                     {fleet.map((r) => (
                       <tr key={r.robot_id} className={selectedRobotId === r.robot_id ? 'active-row' : ''}>
-                        <td><strong>{r.robot_id}</strong></td>
+                        <td><button className="table-link" onClick={() => setSelectedRobotId(r.robot_id)}>{r.robot_id}</button></td>
                         <td>{r.name || `Robot ${r.robot_id}`}</td>
                         <td><span className={`state-badge ${String(r.state).toLowerCase()}`}>{r.state}</span></td>
                         <td>
                           <div className="battery-cell">
-                            <div className="battery-mini"><i style={{ width: `${r.battery}%` }} /></div>
-                            {r.battery}%
+                            {r.battery !== null && r.battery !== undefined && Number.isFinite(Number(r.battery)) && <div className="battery-mini"><i style={{ width: `${Math.max(0, Math.min(100, Number(r.battery)))}%` }} /></div>}
+                            {r.battery === null || r.battery === undefined || !Number.isFinite(Number(r.battery)) ? 'Not provided' : `${r.battery}%`}
                           </div>
                         </td>
-                        <td>[{r.x ?? r.position?.[0]}, {r.y ?? r.position?.[1]}]</td>
+                        <td>[{r.x ?? r.position?.[0] ?? '—'}, {r.y ?? r.position?.[1] ?? '—'}]</td>
                         <td>{r.current_task || 'None'}</td>
-                        <td><small>{r.capabilities ? r.capabilities.join(', ') : 'transport, pallet'}</small></td>
+                        <td><small>{r.last_telemetry_at ? new Date(r.last_telemetry_at).toLocaleTimeString() : 'Not provided'}</small></td>
+                        <td><small>{r.capabilities?.length ? r.capabilities.join(', ') : 'Not provided'}</small></td>
                         <td>
                           <button
                             className="text-button"
@@ -1043,9 +1377,11 @@ function App() {
                         </td>
                       </tr>
                     ))}
+                    {!fleetLoading && !fleet.length && <tr><td colSpan="9" className="empty-cell">No robots were returned by the fleet API.</td></tr>}
                   </tbody>
                 </table>
               </div>
+              {fleetError && <div className="notice error">{fleetError}<button className="text-button" onClick={loadFleetData}>Retry</button></div>}
             </div>
           </div>
         )}
@@ -1067,6 +1403,7 @@ function App() {
                       Payload Weight (kg)
                       <input
                         type="number"
+                        min="0"
                         value={complianceForm.payload_weight}
                         onChange={(e) => setComplianceForm({ ...complianceForm, payload_weight: Number(e.target.value) })}
                       />
@@ -1076,6 +1413,7 @@ function App() {
                       <input
                         type="number"
                         step="0.1"
+                        min="0"
                         value={complianceForm.speed}
                         onChange={(e) => setComplianceForm({ ...complianceForm, speed: Number(e.target.value) })}
                       />
@@ -1100,7 +1438,7 @@ function App() {
                     Hazardous Material Payload
                   </label>
 
-                  <button type="submit" className="glow-button full-width">Verify Operation</button>
+                  <button type="submit" className="glow-button full-width" disabled={complianceLoading}>{complianceLoading ? 'Checking SOPs…' : 'Verify Operation'}</button>
                 </form>
 
                 {complianceResult && (
@@ -1109,10 +1447,38 @@ function App() {
                     {complianceResult.violations?.map((v, i) => (
                       <div key={i}>• {v}</div>
                     ))}
+                    {complianceResult.sop_citations?.length > 0 && (
+                      <div className="sop-evidence">
+                        <strong>SOP evidence returned by retrieval</strong>
+                        {complianceResult.sop_citations.map((citation) => <span key={citation}>{citation}</span>)}
+                        {complianceResult.sop_evidence?.map((evidence, index) => (
+                          <details key={`${evidence.sop_id}-${index}`}>
+                            <summary>{evidence.filename || evidence.sop_id || 'Retrieved SOP'} — similarity {typeof evidence.similarity_score === 'number' ? evidence.similarity_score.toFixed(3) : 'not provided'}</summary>
+                            <p>{evidence.content}</p>
+                          </details>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             </div>
+            {globalError && <div className="notice error">{globalError}</div>}
+          </div>
+        )}
+
+        {showEmergencyModal && (
+          <div className="modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowEmergencyModal(false); }}>
+            <section className="modal-card card emergency-modal" role="dialog" aria-modal="true" aria-labelledby="emergency-modal-title">
+              <div className="emergency-state-icon">!</div>
+              <p className="overline">DANGEROUS ACTION</p>
+              <h3 id="emergency-modal-title">Emergency Stop</h3>
+              <p>This will stop active robot operations in the connected simulation. Continue only if you intend to halt the fleet.</p>
+              <div className="modal-actions">
+                <button type="button" className="secondary-button" onClick={() => setShowEmergencyModal(false)} disabled={emergencyBusy}>Cancel</button>
+                <button type="button" className="stop-button stop" onClick={() => handleToggleEmergencyStop(false)} disabled={emergencyBusy}>{emergencyBusy ? 'Stopping…' : 'STOP ALL ROBOTS'}</button>
+              </div>
+            </section>
           </div>
         )}
 

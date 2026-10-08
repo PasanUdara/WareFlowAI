@@ -33,7 +33,7 @@ The system is composed of **3 core specialized agents** and **1 unified integrat
    - FastAPI gateway (`main.py`) exposing REST endpoints and WebSocket telemetry feeds.
    - Shared agent messaging protocol (MCP/HTTP-style envelope) and async pub/sub event bus.
    - Security layer featuring JWT-based authentication, password encryption, and prompt injection sanitization.
-   - Responsive web dashboard for real-time fleet visualization and order dispatch.
+   - Responsive React control center for live fleet visualization, order dispatch, task monitoring, SOP compliance, exception recovery, event history, emergency control, and proposed commercial plans.
 
 ---
 
@@ -114,6 +114,8 @@ Once running, the following services and endpoints are immediately available:
 | **Qdrant Web Console** | [http://localhost:6333/dashboard](http://localhost:6333/dashboard) | Vector database web GUI and collection inspector |
 | **Qdrant REST API** | [http://localhost:6333](http://localhost:6333) | Vector DB REST endpoints |
 | **WebSocket Telemetry** | `ws://localhost:8000/ws/telemetry` | 2Hz live AMR position and battery stream |
+
+The frontend waits for the API container's health check before starting, which prevents the login proxy from sending requests while backend dependencies and the embedding model are still initializing. The frontend reuses the live fleet, exception, event-history, order-dispatch, compliance, and emergency-control APIs. The backend does not currently expose a durable order/task listing endpoint, so the Tasks view combines robot-reported current assignments with dispatch responses stored only for the current browser session. Commercial pricing and deployment options shown in the UI are proposals for the university project, not actual customer pricing or deployment claims.
 
 #### 6. Test Endpoints via CLI
 
