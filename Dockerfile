@@ -36,7 +36,7 @@ USER wareflow
 EXPOSE 8000
 
 # Container healthcheck (uses Python instead of curl to avoid apt-get dependency)
-HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 # Default command: launch FastAPI server with Uvicorn

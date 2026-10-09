@@ -234,3 +234,65 @@ pytest
 - [TECHNICAL.md](file:///docs/TECHNICAL.md): Data schemas, API contracts, and module specifications.
 - [ROADMAP.md](file:///docs/ROADMAP.md): Sprint milestones and deliverable tracking per member.
 - [CHANGELOG.md](file:///docs/CHANGELOG.md): Version release history and feature change tracking.
+
+---
+
+## How to Use WareFlow AI
+
+After the stack is running, open [http://localhost:5173](http://localhost:5173) and follow this workflow.
+
+### 1. Sign in
+
+1. Open the dashboard in a browser.
+2. Enter credentials configured for the API and select **Sign in**.
+3. Confirm the status indicator in the top bar reports that the system is online. If it is reconnecting, wait a few seconds and refresh the fleet data.
+
+### 2. Check the dashboard
+
+1. Select **Dashboard** in the sidebar.
+2. Review the fleet summary cards for available robots, active tasks, charging units, battery level, and alerts.
+3. Select a robot directly on the warehouse grid to view its position, current task, battery, route, and enabled state.
+4. Use the refresh button in the top bar when you need the latest fleet and event data.
+
+### 3. Dispatch a warehouse order
+
+1. Open **Orders**.
+2. Choose a sample order or write a plain-language instruction, for example: `Move 5 pallets from Shelf A2 to Packing Station 3.`
+3. Select **Dispatch Order**.
+4. Review the returned parsed order, subtasks, assigned AMR, and workflow status.
+5. Open **Tasks** to monitor active robot tasks and the current browser session's dispatch history.
+
+### 4. Manage the robot fleet
+
+1. Open **Robots**.
+2. Select a robot ID to inspect it on the dashboard map.
+3. Use **Disable** to take a robot out of operation, or **Enable** to return it to service.
+4. Select **Add Robot** to register a new AMR. Provide a unique robot ID, optional name, starting coordinates, and comma-separated capabilities.
+
+### 5. Verify safety and SOP compliance
+
+1. Open **Compliance**.
+2. Enter the payload weight, operating speed, target zone, and hazardous-material status.
+3. Select **Verify Operation**.
+4. Review the approval or violation result, including the retrieved SOP evidence when it is available.
+
+### 6. Simulate and resolve exceptions
+
+1. Open **Exceptions**, or use the exception controls on the Dashboard.
+2. Select a robot, then trigger a demo anomaly such as a stuck robot, low battery, or blocked path.
+3. Watch the recovery lifecycle progress through detection, analysis, recovery, and resolution.
+4. Use **Clear Obstacles** after a blocked-path demonstration to restore the simulation state.
+
+### 7. Monitor events and respond to emergencies
+
+1. Open **Events** to search recent backend events and inspect each event payload.
+2. Use **Emergency Stop** only when you need to halt the simulation's robots immediately.
+3. Confirm the action in the safety dialog, then select **Resume System** once it is safe to continue.
+
+### 8. Stop the project when finished
+
+```bash
+docker compose down
+```
+
+To also remove the local Qdrant data volume, use `docker compose down -v`.
