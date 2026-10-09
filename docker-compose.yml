@@ -68,7 +68,9 @@ services:
       - VITE_API_PROXY_TARGET=http://app:8000
     volumes:
       - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
       - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
     depends_on:
       app:
         condition: service_healthy

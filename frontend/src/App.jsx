@@ -15,45 +15,75 @@ import {
   loginUser,
   triggerEmergencyStop
 } from './api';
+import WarehouseMap from './components/WarehouseMap';
+import { MOCK_BLOCKED_CELLS, MOCK_FLEET } from './mockTelemetry';
+import SimulationView from './components/SimulationView';
+import ControlRoom from './components/ControlRoom';
+import {
+  LayoutDashboard,
+  Package,
+  ListChecks,
+  Bot,
+  ShieldCheck,
+  AlertTriangle,
+  Activity,
+  ShieldAlert,
+  Layers,
+  RefreshCw,
+  Bell,
+  LogOut,
+  OctagonAlert,
+  Play,
+  Zap,
+  Truck,
+  HelpCircle,
+  Battery,
+  Construction,
+  RotateCcw,
+  User,
+  X,
+  Check,
+  Lock
+} from './components/icons';
 
 const defaultOrder = '';
 
 const PRESET_ORDERS = [
-  { label: '📦 Standard Delivery', text: 'Move 5 pallets from Shelf A2 to Packing Station 3.' },
-  { label: '⚠️ Hazmat Transfer', text: 'Transport 1 drum of solvent from Hazmat Aisle 4 to Station 2' },
-  { label: '🏗️ Heavy Equipment', text: 'Move 2 heavy motor assemblies (24kg) from Receiving to Shelf B1' },
-  { label: '❓ Ambiguous Order', text: 'Bring the blue box from somewhere over there' }
+  { Icon: Package, label: 'Standard Delivery', text: 'Move 5 pallets from Shelf A2 to Packing Station 3.' },
+  { Icon: AlertTriangle, label: 'Hazmat Transfer', text: 'Transport 1 drum of solvent from Hazmat Aisle 4 to Station 2' },
+  { Icon: Truck, label: 'Heavy Equipment', text: 'Move 2 heavy motor assemblies (24kg) from Receiving to Shelf B1' },
+  { Icon: HelpCircle, label: 'Ambiguous Order', text: 'Bring the blue box from somewhere over there' }
 ];
 
 const NAV_GROUPS = [
   {
     label: 'OPERATIONS',
     items: [
-      { id: 'overview', icon: '⌂', label: 'Dashboard' },
-      { id: 'orders', icon: '⇢', label: 'Orders' },
-      { id: 'tasks', icon: '☷', label: 'Tasks' }
+      { id: 'overview', Icon: LayoutDashboard, label: 'Dashboard' },
+      { id: 'orders', Icon: Package, label: 'Orders' },
+      { id: 'tasks', Icon: ListChecks, label: 'Tasks' }
     ]
   },
   {
     label: 'FLEET',
-    items: [{ id: 'fleet', icon: '◉', label: 'Robots' }]
+    items: [{ id: 'fleet', Icon: Bot, label: 'Robots' }]
   },
   {
     label: 'INTELLIGENCE',
-    items: [{ id: 'compliance', icon: '✓', label: 'Compliance' }]
+    items: [{ id: 'compliance', Icon: ShieldCheck, label: 'Compliance' }]
   },
   {
     label: 'MONITORING',
     items: [
-      { id: 'exception', icon: '⚠', label: 'Exceptions' },
-      { id: 'events', icon: '≋', label: 'Events' }
+      { id: 'exception', Icon: AlertTriangle, label: 'Exceptions' },
+      { id: 'events', Icon: Activity, label: 'Events' }
     ]
   },
   {
     label: 'SYSTEM',
     items: [
-      { id: 'emergency', icon: '⛑', label: 'Emergency Stop' },
-      { id: 'commercial', icon: '◇', label: 'Plans & Deployment' }
+      { id: 'emergency', Icon: ShieldAlert, label: 'Emergency Stop' },
+      { id: 'commercial', Icon: Layers, label: 'Plans & Deployment' }
     ]
   }
 ];
@@ -93,6 +123,11 @@ function App() {
   const [activeException, setActiveException] = useState(null);
   const [blockedCells, setBlockedCells] = useState([]);
   const [anomalyLoading, setAnomalyLoading] = useState(false);
+  const [mapOptions, setMapOptions] = useState({ grid: true, routes: true, labels: true });
+  const [playbackSpeed, setPlaybackSpeed] = useState('1x');
+  const [mockMode, setMockMode] = useState(false);
+  const [simulationOpen, setSimulationOpen] = useState(false);
+  const [simulationInitialFocus, setSimulationInitialFocus] = useState(false);
   // Task Planner State
   const [orderText, setOrderText] = useState(defaultOrder);
   const [plan, setPlan] = useState(null);
@@ -176,7 +211,9 @@ function App() {
             if (data.active_exception) {
               setActiveException(data.active_exception);
             }
-            if (data.blocked_cells) {
+            if (data.dynamic_blocked_cells !== undefined) {
+              setBlockedCells(data.dynamic_blocked_cells);
+            } else if (data.blocked_cells) {
               setBlockedCells(data.blocked_cells);
             }
           } catch (err) {
@@ -236,7 +273,7 @@ function App() {
     try {
       const data = await fetchActiveException();
       setActiveException(data.lifecycle || null);
-      setBlockedCells(data.blocked_cells || []);
+      setBlockedCells(data.dynamic_blocked_cells !== undefined ? data.dynamic_blocked_cells : data.blocked_cells || []);
     } catch (err) {
       setExceptionError(err.message || 'Unable to load exception lifecycle.');
     } finally {
@@ -255,7 +292,7 @@ function App() {
           time: e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '—',
           source: e.source,
           type: e.event_type,
-          summary: `${e.source} ➔ ${e.destination}: ${JSON.stringify(e.payload).substring(0, 120)}`
+          summary: `${e.source} → ${e.destination}: ${JSON.stringify(e.payload).substring(0, 120)}`
         }));
         setActivityLogs(formatted);
       }
@@ -289,6 +326,9 @@ function App() {
       : null;
     return { total, moving, charging, available, attention, avgBattery, activeTaskCount, exceptionActive };
   }, [fleet, activeException]);
+
+  const mapFleet = mockMode ? MOCK_FLEET : fleet;
+  const mapBlockedCells = mockMode ? MOCK_BLOCKED_CELLS : blockedCells;
 
   const selectedRobot = useMemo(() => {
     return fleet.find((r) => r.robot_id === selectedRobotId) || fleet[0] || null;
@@ -596,7 +636,10 @@ function App() {
                   }}
                   aria-current={activeTab === item.id ? 'page' : undefined}
                 >
-                  <i aria-hidden="true">{item.icon}</i>{item.label}
+                  <i aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {item.Icon ? <item.Icon size={16} /> : null}
+                  </i>
+                  {item.label}
                   {item.id === 'events' && events.length > 0 && <small className="nav-count">{events.length}</small>}
                 </button>
               ))}
@@ -606,7 +649,11 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="user-profile">
-            <span>👤 <strong>{currentUser}</strong>{userRole && <small className="role-label">{userRole}</small>}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <User size={13} />
+              <strong>{currentUser}</strong>
+              {userRole && <small className="role-label">{userRole}</small>}
+            </span>
             <button className="text-button" onClick={handleLogout}>Sign Out</button>
           </div>
           <div className="system-status-indicator">
@@ -625,21 +672,25 @@ function App() {
           </div>
 
           <div className="header-actions">
-            <button className="icon-button" onClick={() => { loadFleetData(); loadEventHistory(); }} title="Refresh fleet and events" aria-label="Refresh fleet and events">↻</button>
-            <button className="icon-button notification-button" onClick={() => { setActiveTab('events'); loadEventHistory(); }} title="View event notifications" aria-label="View event notifications">
-              🔔{events.length > 0 && <span className="notification-dot" />}
+            <button className="icon-button" onClick={() => { loadFleetData(); loadEventHistory(); }} title="Refresh fleet and events" aria-label="Refresh fleet and events" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <RefreshCw size={15} />
             </button>
-            <button className="icon-button" onClick={handleLogout} title="Sign Out / Switch User">🔒</button>
+            <button className="icon-button notification-button" onClick={() => { setActiveTab('events'); loadEventHistory(); }} title="View event notifications" aria-label="View event notifications" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Bell size={15} />{events.length > 0 && <span className="notification-dot" />}
+            </button>
+            <button className="icon-button" onClick={handleLogout} title="Sign Out / Switch User" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Lock size={15} />
+            </button>
             <span className={`system-badge ${emergencyStop || wsStatus !== 'Connected' ? 'critical' : 'online'}`}>
               <b /> {wsStatus === 'Connected' ? 'LIVE' : wsStatus.toUpperCase()}
             </span>
             {emergencyStop ? (
-              <button onClick={() => handleToggleEmergencyStop(true)} className="stop-button resume" disabled={emergencyBusy}>
-                ▶ Resume Fleet
+              <button onClick={() => handleToggleEmergencyStop(true)} className="stop-button resume" disabled={emergencyBusy} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <Play size={14} /> Resume Fleet
               </button>
             ) : (
-              <button onClick={() => setShowEmergencyModal(true)} className="stop-button stop">
-                🛑 EMERGENCY STOP
+              <button onClick={() => setShowEmergencyModal(true)} className="stop-button stop" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <OctagonAlert size={14} /> EMERGENCY STOP
               </button>
             )}
           </div>
@@ -647,8 +698,10 @@ function App() {
 
         {globalError && (
           <div className="notice warning-notice">
-            <span>⚠️ {globalError}</span>
-            <button onClick={() => setGlobalError('')}>×</button>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <AlertTriangle size={15} /> {globalError}
+            </span>
+            <button onClick={() => setGlobalError('')}><X size={14} /></button>
           </div>
         )}
         {activeTab === 'overview' && fleetError && (
@@ -661,7 +714,7 @@ function App() {
         {/* METRICS STRIP */}
         {activeTab === 'overview' && <section className="metric-grid">
           <div className="metric cyan">
-            <div className="metric-icon">🤖</div>
+            <div className="metric-icon"><Bot size={20} /></div>
             <div>
               <span>Total Robots</span>
               <strong>{fleetLoading ? '…' : fleetHasLoaded ? fleetSummary.total : '—'}</strong>
@@ -669,7 +722,7 @@ function App() {
             </div>
           </div>
           <div className="metric violet">
-            <div className="metric-icon">↗</div>
+            <div className="metric-icon"><Activity size={20} /></div>
             <div>
               <span>Moving Robots</span>
               <strong>{fleetLoading ? '…' : fleetHasLoaded ? fleetSummary.moving : '—'}</strong>
@@ -677,7 +730,7 @@ function App() {
             </div>
           </div>
           <div className="metric lime">
-            <div className="metric-icon">⚡</div>
+            <div className="metric-icon"><Zap size={20} /></div>
             <div>
               <span>Available Robots</span>
               <strong>{fleetLoading ? '…' : fleetHasLoaded ? fleetSummary.available : '—'}</strong>
@@ -685,7 +738,7 @@ function App() {
             </div>
           </div>
           <div className="metric cyan">
-            <div className="metric-icon">▤</div>
+            <div className="metric-icon"><ListChecks size={20} /></div>
             <div>
               <span>Active Tasks</span>
               <strong>{fleetLoading ? '…' : fleetHasLoaded ? fleetSummary.activeTaskCount : '—'}</strong>
@@ -693,7 +746,7 @@ function App() {
             </div>
           </div>
           <div className="metric orange">
-            <div className="metric-icon">⚠️</div>
+            <div className="metric-icon"><AlertTriangle size={20} /></div>
             <div>
               <span>Active Exceptions</span>
               <strong>{exceptionLoading ? '…' : activeException ? (fleetSummary.exceptionActive ? 1 : 0) : '—'}</strong>
@@ -701,7 +754,7 @@ function App() {
             </div>
           </div>
           <div className={`metric ${complianceResult ? (complianceResult.is_compliant ? 'lime' : 'orange') : 'violet'}`}>
-            <div className="metric-icon">✓</div>
+            <div className="metric-icon"><ShieldCheck size={20} /></div>
             <div>
               <span>Latest Compliance</span>
               <strong>{complianceResult ? (complianceResult.is_compliant ? 'PASS' : 'FAIL') : '—'}</strong>
@@ -770,7 +823,9 @@ function App() {
             <div className="card">
               <div className="card-header">
                 <div><p className="overline">BACKEND EVENT HISTORY</p><h3>{events.length} recent events</h3></div>
-                <button className="secondary-button refresh-events" onClick={loadEventHistory} disabled={eventLoading}>{eventLoading ? 'Loading…' : '↻ Refresh events'}</button>
+                <button className="secondary-button refresh-events" onClick={loadEventHistory} disabled={eventLoading}>
+                  {eventLoading ? 'Loading…' : <><RefreshCw size={13} style={{ marginRight: '6px', verticalAlign: '-2px' }} /> Refresh events</>}
+                </button>
               </div>
               <label className="search-field">
                 <span className="visually-hidden">Search events</span>
@@ -811,14 +866,18 @@ function App() {
               <p>Use the backend emergency control to halt or resume robot movement. This action is shared across the running simulation.</p>
             </div>
             <div className={`card emergency-control-card ${emergencyStop ? 'is-stopped' : ''}`}>
-              <div className="emergency-state-icon">{emergencyStop ? '■' : '!'}</div>
+              <div className="emergency-state-icon">{emergencyStop ? <OctagonAlert size={36} /> : <ShieldAlert size={36} />}</div>
               <div>
                 <p className="overline">SYSTEM CONTROL</p>
                 <h3>{emergencyStop === true ? 'EMERGENCY STOP ACTIVE' : emergencyStop === false && fleetHasLoaded ? 'Fleet operations are enabled' : 'Backend status unavailable'}</h3>
                 <p>{emergencyStop === true ? 'Robot movement is halted by the backend simulation.' : emergencyStop === false && fleetHasLoaded ? 'An emergency stop immediately halts robot movement in the backend simulation.' : 'The backend has not returned the current emergency-stop state. You can still issue the stop command if needed.'}</p>
                 {emergencyStop
-                  ? <button className="stop-button resume" disabled={emergencyBusy} onClick={() => handleToggleEmergencyStop(true)}>{emergencyBusy ? 'Resuming…' : '▶ Resume System'}</button>
-                  : <button className="stop-button stop emergency-action" onClick={() => setShowEmergencyModal(true)}>🛑 Stop all robots</button>}
+                  ? <button className="stop-button resume" disabled={emergencyBusy} onClick={() => handleToggleEmergencyStop(true)}>
+                      {emergencyBusy ? 'Resuming…' : <><Play size={13} style={{ marginRight: '6px' }} /> Resume System</>}
+                    </button>
+                  : <button className="stop-button stop emergency-action" onClick={() => setShowEmergencyModal(true)}>
+                      <OctagonAlert size={14} style={{ marginRight: '6px' }} /> Stop all robots
+                    </button>}
               </div>
             </div>
             <div className="card margin-top"><h3>Control status</h3><p className="subtle-text">Backend-reported status: <strong>{emergencyStop === null ? 'Unavailable' : emergencyStop ? 'Stopped' : 'Running'}</strong>. WebSocket: <strong>{wsStatus}</strong>.</p></div>
@@ -857,248 +916,9 @@ function App() {
         {/* TAB 1: OVERVIEW & MAP */}
         {activeTab === 'overview' && (
           <div className="tab-view fade-in">
-            <div className="dashboard-grid">
-              {/* 2D Grid Map */}
-              <div className="card">
-                <div className="card-header">
-                  <div>
-                    <p className="overline">LIVE TELEMETRY MAP (20x15)</p>
-                    <h3>2D Warehouse Grid Telemetry</h3>
-                  </div>
-                  <div className="map-legend">
-                    <span><b className="dot cyan" /> IDLE</span>
-                    <span><b className="dot violet" /> MOVING</span>
-                    <span><b className="dot orange" /> ATTENTION</span>
-                    <span><b className="dot" style={{ background: '#60a5fa' }} /> ROUTE</span>
-                    <span><b className="dot" style={{ background: '#fbbf24' }} /> A* DETOUR</span>
-                    <span>🏁 GOAL</span>
-                    <span>🧱 OBSTACLE</span>
-                  </div>
-                </div>
-
-                <div className="warehouse-grid-large">
-                  {Array.from({ length: 300 }, (_, index) => {
-                    const x = index % 20;
-                    const y = Math.floor(index / 20);
-                    const robot = fleet.find((r) => {
-                      const rx = r.x ?? r.position?.[0];
-                      const ry = r.y ?? r.position?.[1];
-                      return Number(rx) === x && Number(ry) === y;
-                    });
-                    const isSelected = robot && robot.robot_id === selectedRobotId;
-                    const isWaypoint = selectedRobot?.waypoints?.some((wp) => Number(wp[0]) === x && Number(wp[1]) === y);
-                    const isDestination = selectedRobot?.destination && Number(selectedRobot.destination[0]) === x && Number(selectedRobot.destination[1]) === y;
-                    const isBlocked = blockedCells?.some((bc) => Number(bc[0]) === x && Number(bc[1]) === y);
-                    const isRerouted = Boolean(selectedRobot?.is_rerouted);
-
-                    return (
-                      <div className={`grid-square ${isSelected ? 'selected-square' : ''}`} key={index}>
-                        {robot ? (
-                          <button
-                            className={`robot-pin ${String(robot.state).toLowerCase()} ${robot.enabled === false ? 'disabled' : ''}`}
-                            onClick={() => setSelectedRobotId(robot.robot_id)}
-                            title={`${robot.robot_id} (${robot.name}) - ${robot.state}`}
-                          >
-                            {robot.robot_id}
-                          </button>
-                        ) : isDestination ? (
-                          <span className="destination-marker" title="Destination Target">🏁</span>
-                        ) : isBlocked ? (
-                          <span className="obstacle-marker" title="Dynamic Blocked Obstacle">🧱</span>
-                        ) : isWaypoint ? (
-                          <div
-                            className={`waypoint-dot ${isRerouted ? 'rerouted' : ''}`}
-                            title={isRerouted ? 'A* Detour Waypoint' : 'A* Planned Waypoint'}
-                          />
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Selected AMR Detail */}
-              <div className="card">
-                <div className="card-header">
-                  <div>
-                    <p className="overline">SELECTED AMR INSPECTOR</p>
-                    <h3>{selectedRobot?.robot_id || 'Select a Robot'}</h3>
-                  </div>
-                </div>
-
-                {selectedRobot ? (
-                  <div className="robot-inspector-card">
-                    <div className="inspector-head">
-                      <div className="amr-icon">🤖</div>
-                      <div>
-                        <h4>{selectedRobot.name || selectedRobot.robot_id}</h4>
-                        <span className={`state-tag ${String(selectedRobot.state).toLowerCase()}`}>
-                          {selectedRobot.state}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="telemetry-rows">
-                      <div className="t-row"><span>Robot ID</span><strong>{selectedRobot.robot_id}</strong></div>
-                      <div className="t-row"><span>Position</span><strong>X: {selectedRobot.x ?? selectedRobot.position?.[0] ?? 'Not provided'}, Y: {selectedRobot.y ?? selectedRobot.position?.[1] ?? 'Not provided'}</strong></div>
-                      <div className="t-row"><span>Battery Level</span><strong>{selectedRobot.battery === null || selectedRobot.battery === undefined ? 'Not provided' : `${selectedRobot.battery}%`}</strong></div>
-                      <div className="t-row"><span>Current Task</span><strong>{selectedRobot.current_task || 'No task reported'}</strong></div>
-                      <div className="t-row"><span>Operational Status</span><strong>{selectedRobot.enabled !== false ? 'Enabled' : 'Disabled'}</strong></div>
-                      <div className="t-row"><span>Route Status</span><strong>{selectedRobot.is_rerouted ? '⚠️ Detoured (A*)' : selectedRobot.waypoints?.length ? 'Active Route' : 'Idle'}</strong></div>
-                    </div>
-
-                    <button
-                      className={`secondary-button full-width ${selectedRobot.enabled !== false ? 'stop' : 'resume'}`}
-                      onClick={() => handleToggleRobotState(selectedRobot.robot_id, selectedRobot.enabled !== false)}
-                    >
-                      {selectedRobot.enabled !== false ? 'Disable Robot' : 'Enable Robot'}
-                    </button>
-
-                    {/* Member 2 Exception Handling Demo Controls */}
-                    <div style={{ marginTop: '14px', borderTop: '1px solid #1e354d', paddingTop: '12px' }}>
-                      <p className="overline" style={{ color: '#5ee2b1' }}>MEMBER 2: EXCEPTION DEMO CONTROLS</p>
-                      <div className="anomaly-actions-bar">
-                        <button
-                          type="button"
-                          className="anomaly-btn stuck"
-                          disabled={anomalyLoading}
-                          onClick={() => handleInjectAnomaly('stuck')}
-                          title="Simulate motor stall / stuck AMR condition"
-                        >
-                          ⚠️ Inject Stuck
-                        </button>
-                        <button
-                          type="button"
-                          className="anomaly-btn battery"
-                          disabled={anomalyLoading}
-                          onClick={() => handleInjectAnomaly('low_battery')}
-                          title="Simulate critical low battery (< 15%)"
-                        >
-                          🪫 Low Battery (10%)
-                        </button>
-                        <button
-                          type="button"
-                          className="anomaly-btn block"
-                          disabled={anomalyLoading}
-                          onClick={() => handleInjectAnomaly('block_path')}
-                          title="Place obstacle on robot route"
-                        >
-                          🚧 Block Path
-                        </button>
-                        <button
-                          type="button"
-                          className="anomaly-btn clear"
-                          onClick={handleClearObstacles}
-                          title="Clear all dynamic obstacles"
-                        >
-                          🔄 Clear Obstacles
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="overline">Click a robot on the grid to inspect details.</p>
-                )}
-              </div>
-            </div>
-
-            {/* Member 2 Dedicated Exception Pipeline Card */}
-            <div className="card exception-panel margin-top">
-              <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <span className="badge-member">Member 2 Agent</span>
-                  <p className="overline">AUTONOMOUS EXCEPTION HANDLING & RECOVERY ENGINE</p>
-                  <h3>Active Anomaly & Recovery Lifecycle</h3>
-                </div>
-                <span className={`status-pill-lg ${exceptionStatusLabel.toLowerCase()}`} style={{
-                  padding: '6px 14px',
-                  borderRadius: '20px',
-                  font: '11px "DM Mono", monospace',
-                  background: activeException?.status === 'RECOVERING' ? '#1d4ed8' : activeException?.status === 'RESOLVED' ? '#047857' : activeException?.status === 'DETECTED' ? '#b91c1c' : '#1e293b',
-                  color: '#fff',
-                  border: '1px solid rgba(255,255,255,0.2)'
-                }}>
-                  {exceptionStatusLabel}
-                </span>
-              </div>
-
-              <div className="exception-stepper">
-                <div className={`step-badge ${['DETECTED', 'ANALYZING', 'RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step' : ''}`}>
-                  1. DETECTED
-                </div>
-                <div className={`step-badge ${['ANALYZING', 'RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step analyzing' : ''}`}>
-                  2. ANALYZING (MONITOR)
-                </div>
-                <div className={`step-badge ${['RECOVERING', 'RESOLVED'].includes(activeException?.status) ? 'active-step recovering' : ''}`}>
-                  3. RECOVERING (A* / CHARGER)
-                </div>
-                <div className={`step-badge ${activeException?.status === 'RESOLVED' ? 'active-step resolved' : ''}`}>
-                  4. RESOLVED
-                </div>
-              </div>
-
-              {exceptionError && <div className="notice error">{exceptionError}<button className="text-button" onClick={loadExceptionData}>Retry</button></div>}
-              {exceptionLoading && <p className="empty-state">Loading exception lifecycle…</p>}
-              {activeException?.anomaly ? (
-                <div className="recovery-details-box">
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
-                    <div>
-                      <span style={{ color: '#94a3b8', fontSize: '11px' }}>ANOMALY TYPE:</span>
-                      <div style={{ fontWeight: 700, color: '#f87171' }}>
-                        {activeException.anomaly.event_type || activeException.anomaly.anomaly_type || 'ANOMALY'} ({activeException.anomaly.robot_id || 'AMR'})
-                      </div>
-                    </div>
-                    <div>
-                      <span style={{ color: '#94a3b8', fontSize: '11px' }}>SEVERITY:</span>
-                      <div style={{ fontWeight: 700, color: activeException.anomaly.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b' }}>
-                        {activeException.anomaly.severity || 'Not provided'}
-                      </div>
-                    </div>
-                    <div>
-                      <span style={{ color: '#94a3b8', fontSize: '11px' }}>RECOVERY DECISION:</span>
-                      <div style={{ fontWeight: 700, color: '#38bdf8' }}>
-                        {activeException.recovery?.action_type || 'No recovery action returned yet'}
-                      </div>
-                    </div>
-                    <div>
-                      <span style={{ color: '#94a3b8', fontSize: '11px' }}>RECOVERY DIRECTIVE:</span>
-                      <div style={{ fontSize: '12px', color: '#cbd5e1' }}>
-                        {activeException.recovery?.notes || 'No recovery notes returned yet'}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : !exceptionLoading && !exceptionError ? (
-                <div className="recovery-details-box" style={{ color: '#94a3b8', fontSize: '11px' }}>
-                  No active exception is reported. Use the simulation controls to exercise the recovery workflow.
-                </div>
-              ) : null}
-            </div>
-            {/* Agent Activity / Event Log Stream */}
-            <div className="card margin-top">
-              <div className="card-header">
-                <div>
-                  <p className="overline">INTER-AGENT PROTOCOL BUS</p>
-                  <h3>Real-time Agent Activity Stream</h3>
-                </div>
-                <button className="text-button" onClick={loadEventHistory}>Refresh Logs</button>
-              </div>
-
-              <div className="event-log-container">
-                {activityLogs.map((log, idx) => (
-                  <div key={idx} className="log-row">
-                    <span className="log-time">{log.time}</span>
-                    <span className="log-route">{log.source}</span>
-                    <span className="log-event">{log.type}</span>
-                    <span className="log-payload">{log.summary}</span>
-                  </div>
-                ))}
-                {!activityLogs.length && <div className="overline">Listening to EventBus events...</div>}
-              </div>
-            </div>
+            <ControlRoom fleet={mapFleet} blockedCells={mapBlockedCells} selectedRobotId={selectedRobotId} onSelectRobot={setSelectedRobotId} onFullscreen={(focus = false) => { setSimulationInitialFocus(Boolean(focus)); setSimulationOpen(true); }} onInject={handleInjectAnomaly} onClear={handleClearObstacles} events={activityLogs} mockMode={mockMode} setMockMode={setMockMode} summary={fleetSummary} />
           </div>
         )}
-
         {/* TAB 2: TASK PLANNER */}
         {(activeTab === 'orders' || activeTab === 'planning') && (
           <div className="tab-view fade-in">
@@ -1112,11 +932,15 @@ function App() {
               <div className="card">
                 <p className="overline">NATURAL LANGUAGE OPERATION DISPATCH</p>
                 <div className="preset-chips">
-                  {PRESET_ORDERS.map((p, i) => (
-                    <button key={i} className="chip" onClick={() => setOrderText(p.text)}>
-                      {p.label}
-                    </button>
-                  ))}
+                  {PRESET_ORDERS.map((p, i) => {
+                    const PresetIcon = p.Icon;
+                    return (
+                      <button key={i} className="chip" onClick={() => setOrderText(p.text)}>
+                        {PresetIcon && <PresetIcon size={13} style={{ marginRight: '6px', verticalAlign: '-2px' }} />}
+                        {p.label}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 <form onSubmit={handleDispatchOrder}>
@@ -1131,7 +955,7 @@ function App() {
                   <div className="planner-submit-bar">
                     <span className="char-count">{orderText.length}/500 chars</span>
                     <button type="submit" className="glow-button" disabled={planning || !orderText.trim()}>
-                      {planning ? 'Running LangGraph Planner...' : '⚡ Dispatch Task'}
+                      {planning ? 'Running LangGraph Planner...' : <><Zap size={14} style={{ marginRight: '6px', verticalAlign: '-2px' }} /> Dispatch Task</>}
                     </button>
                   </div>
                 </form>
@@ -1148,7 +972,7 @@ function App() {
                     <div className="parsed-entities">
                       <div className="entity"><span>Item:</span> <strong>{plan.parsed_order.item || 'Not returned'}</strong></div>
                       <div className="entity"><span>Qty:</span> <strong>{plan.parsed_order.quantity ?? 'Not returned'}</strong></div>
-                      <div className="entity"><span>Route:</span> <strong>{plan.parsed_order.source || 'Not returned'} ➔ {plan.parsed_order.destination || 'Not returned'}</strong></div>
+                      <div className="entity"><span>Route:</span> <strong>{plan.parsed_order.source || 'Not returned'} → {plan.parsed_order.destination || 'Not returned'}</strong></div>
                       <div className="entity"><span>Assigned AMR:</span> <strong className="highlight-amr">{plan.assigned_robot_id || 'None'}</strong></div>
                     </div>
                   )}
@@ -1163,7 +987,9 @@ function App() {
                       ['Execution', ['assigned', 'running', 'completed'].includes(String(plan.status).toLowerCase()), `API status: ${plan.status || 'not provided'}`]
                     ].map(([label, complete, detail], index) => (
                       <div className={`workflow-step ${complete === null ? 'unknown' : complete ? 'complete' : 'incomplete'}`} key={label}>
-                        <span>{complete === null ? 'i' : complete ? '✓' : index + 1}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {complete === null ? 'i' : complete ? <Check size={11} /> : index + 1}
+                        </span>
                         <div><strong>{label}</strong><small>{detail}</small></div>
                       </div>
                     ))}
@@ -1226,7 +1052,7 @@ function App() {
                     onClick={() => handleInjectAnomaly('stuck')}
                     style={{ padding: '12px 18px', fontSize: '12px' }}
                   >
-                    ⚠️ Force Robot Stuck (12s stall)
+                    <AlertTriangle size={13} style={{ marginRight: '6px', verticalAlign: '-2px' }} /> Force Robot Stuck (12s stall)
                   </button>
                   <button
                     type="button"
@@ -1235,7 +1061,7 @@ function App() {
                     onClick={() => handleInjectAnomaly('low_battery')}
                     style={{ padding: '12px 18px', fontSize: '12px' }}
                   >
-                    🪫 Drain Battery to 10% (Critical)
+                    <Battery size={13} style={{ marginRight: '6px', verticalAlign: '-2px' }} /> Drain Battery to 10% (Critical)
                   </button>
                   <button
                     type="button"
@@ -1244,7 +1070,7 @@ function App() {
                     onClick={() => handleInjectAnomaly('block_path')}
                     style={{ padding: '12px 18px', fontSize: '12px' }}
                   >
-                    🚧 Place Obstacle on Path
+                    <Construction size={13} style={{ marginRight: '6px', verticalAlign: '-2px' }} /> Place Obstacle on Path
                   </button>
                   <button
                     type="button"
@@ -1252,15 +1078,15 @@ function App() {
                     onClick={handleClearObstacles}
                     style={{ padding: '12px 18px', fontSize: '12px' }}
                   >
-                    🔄 Clear All Obstacles
+                    <RotateCcw size={13} style={{ marginRight: '6px', verticalAlign: '-2px' }} /> Clear All Obstacles
                   </button>
                 </div>
 
                 <div className="recovery-details-box" style={{ marginTop: '20px' }}>
                   <h4 style={{ margin: '0 0 8px', color: '#5ee2b1' }}>Recovery Decision Architecture (Deterministic)</h4>
                   <ul style={{ margin: 0, paddingLeft: '18px', color: '#cbd5e1', fontSize: '12px', lineHeight: '1.8' }}>
-                    <li><strong>ROBOT_STUCK (Stall &gt; 10s):</strong> Evaluates obstacle map ➔ Calculates dynamic A* detour avoiding blocked cells ➔ Resumes movement.</li>
-                    <li><strong>LOW_BATTERY (&lt; 15%):</strong> Aborts current task ➔ Finds closest warehouse charger via Manhattan distance ➔ Routes to dock.</li>
+                    <li><strong>ROBOT_STUCK (Stall &gt; 10s):</strong> Evaluates obstacle map → Calculates dynamic A* detour avoiding blocked cells → Resumes movement.</li>
+                    <li><strong>LOW_BATTERY (&lt; 15%):</strong> Aborts current task → Finds closest warehouse charger via Manhattan distance → Routes to dock.</li>
                     <li><strong>PATH_BLOCKED / MOTOR_STALL:</strong> Recovery behavior depends on the backend agent decision; inspect the returned lifecycle and event history.</li>
                   </ul>
                 </div>
@@ -1443,7 +1269,17 @@ function App() {
 
                 {complianceResult && (
                   <div className={`compliance-result-box ${complianceResult.is_compliant ? 'pass' : 'fail'}`}>
-                    <h4>{complianceResult.is_compliant ? '✅ Approved' : '❌ Violations Detected'}</h4>
+                    <h4 style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                      {complianceResult.is_compliant ? (
+                        <>
+                          <Check size={18} /> Approved
+                        </>
+                      ) : (
+                        <>
+                          <X size={18} /> Violations Detected
+                        </>
+                      )}
+                    </h4>
                     {complianceResult.violations?.map((v, i) => (
                       <div key={i}>• {v}</div>
                     ))}
@@ -1470,7 +1306,9 @@ function App() {
         {showEmergencyModal && (
           <div className="modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowEmergencyModal(false); }}>
             <section className="modal-card card emergency-modal" role="dialog" aria-modal="true" aria-labelledby="emergency-modal-title">
-              <div className="emergency-state-icon">!</div>
+              <div className="emergency-state-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <OctagonAlert size={32} />
+              </div>
               <p className="overline">DANGEROUS ACTION</p>
               <h3 id="emergency-modal-title">Emergency Stop</h3>
               <p>This will stop active robot operations in the connected simulation. Continue only if you intend to halt the fleet.</p>
@@ -1542,6 +1380,8 @@ function App() {
           </div>
         )}
       </main>
+      {simulationOpen && <SimulationView fleet={mapFleet} blockedCells={mapBlockedCells} selectedRobotId={selectedRobotId} onSelectRobot={setSelectedRobotId} onClose={() => setSimulationOpen(false)} onInject={handleInjectAnomaly} onClear={handleClearObstacles} events={activityLogs} mockMode={mockMode} setMockMode={setMockMode} initialMapFocus={simulationInitialFocus} />}
+
     </div>
   );
 }

@@ -134,7 +134,8 @@ async def telemetry_background_loop():
                 "emergency_stopped": is_emergency_stopped,
                 "robots": telemetry,
                 "active_exception": active_exception_lifecycle,
-                "blocked_cells": [list(c) for c in sim_env.grid.blocked_cells]
+                "blocked_cells": [list(c) for c in sim_env.grid.blocked_cells],
+                "dynamic_blocked_cells": [list(c) for c in sim_env.dynamic_blocked_cells]
             }
             
             # Broadcast to connected WebSocket clients
@@ -752,7 +753,8 @@ def get_active_exception():
     """Return latest exception lifecycle status and dynamic blocked cells."""
     return {
         "lifecycle": active_exception_lifecycle,
-        "blocked_cells": [list(c) for c in sim_env.grid.blocked_cells]
+        "blocked_cells": [list(c) for c in sim_env.grid.blocked_cells],
+        "dynamic_blocked_cells": [list(c) for c in sim_env.dynamic_blocked_cells]
     }
 @app.get("/api/v1/compliance/verify", summary="Verify SOP compliance")
 async def verify_compliance(
