@@ -597,7 +597,8 @@ async def dispatch_order(
         source_name=parsed.get("source"),
         destination_name=parsed.get("destination"),
         task_description=clean_order_text,
-        item=item_str
+        item=item_str,
+        sub_orders=parsed.get("sub_orders")
     )
 
     await event_bus.publish(

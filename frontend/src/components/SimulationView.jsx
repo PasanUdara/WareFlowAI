@@ -26,16 +26,58 @@ export default function SimulationView({
   const [showRerouteLegend, setShowRerouteLegend] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
   const [speed, setSpeed] = useState('1x');
+  const [isNativeFullscreen, setIsNativeFullscreen] = useState(
+    Boolean(typeof document !== 'undefined' && document.fullscreenElement)
+  );
 
   const activeDetourRobot = fleet.find((r) => r.is_rerouted || r.detour_path || r.avoiding_obstacle);
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsNativeFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  useEffect(() => {
+    if (initialMapFocus) {
+      setMapFocus(true);
+      if (!document.fullscreenElement) {
+        try {
+          document.documentElement.requestFullscreen().catch(() => {});
+        } catch (err) {}
+      }
+    }
+  }, [initialMapFocus]);
+
+  const toggleFullscreen = () => {
+    try {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    } catch (err) {}
+  };
+
+  const handleExit = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+    onClose?.();
+  };
 
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
         if (mapFocus) {
+          if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+          }
           setMapFocus(false);
         } else {
-          onClose();
+          handleExit();
         }
       }
     };
@@ -81,10 +123,31 @@ export default function SimulationView({
             </button>
             <button
               className="focus-hud-btn"
-              onClick={() => setAspectRatio((r) => (r === '16:9' ? '1:1' : '16:9'))}
-              title="Switch Aspect Ratio (16:9 Widescreen or 1:1 Square)"
+              onClick={() =>
+                setAspectRatio((r) => {
+                  if (r === '16:9') return 'fill';
+                  if (r === 'fill') return '4:3';
+                  if (r === '4:3') return '1:1';
+                  return '16:9';
+                })
+              }
+              title="Toggle Aspect Ratio (1080p 16:9, Edge-to-Edge Fill, 4:3 Grid, 1:1 Square)"
             >
-              <Maximize2 size={12} /> {aspectRatio}
+              <Maximize2 size={12} />{' '}
+              {aspectRatio === '16:9'
+                ? '1080p (16:9)'
+                : aspectRatio === 'fill'
+                ? '1080p Fill'
+                : aspectRatio === '4:3'
+                ? '4:3 Grid'
+                : '1:1 Square'}
+            </button>
+            <button
+              className={`focus-hud-btn ${isNativeFullscreen ? 'primary' : ''}`}
+              onClick={toggleFullscreen}
+              title={isNativeFullscreen ? 'Exit 1080p Fullscreen (Esc)' : 'Enter 1080p Fullscreen'}
+            >
+              <Maximize2 size={12} /> {isNativeFullscreen ? '1080p Full' : 'Fullscreen'}
             </button>
             {activeDetourRobot && (
               <button
@@ -96,15 +159,20 @@ export default function SimulationView({
               </button>
             )}
             <button
-              className="focus-hud-btn primary"
-              onClick={() => setMapFocus(false)}
+              className="focus-hud-btn"
+              onClick={() => {
+                if (document.fullscreenElement) {
+                  document.exitFullscreen().catch(() => {});
+                }
+                setMapFocus(false);
+              }}
               title="Restore Side Panels and Controls"
             >
               <LayoutDashboard size={12} /> Show Panels
             </button>
             <button
               className="focus-hud-btn exit"
-              onClick={onClose}
+              onClick={handleExit}
               title="Exit Fullscreen (Esc)"
             >
               <X size={12} /> Exit <kbd>Esc</kbd>
@@ -152,10 +220,21 @@ export default function SimulationView({
           <button className="sim-button" onClick={() => setMockMode((v) => !v)}>
             {mockMode ? <><Activity size={13} /> Live Telemetry</> : <><Cpu size={13} /> Mock Demo</>}
           </button>
-          <button className="sim-button focus" onClick={() => setMapFocus((v) => !v)}>
+          <button
+            className="sim-button focus"
+            onClick={() => {
+              const next = !mapFocus;
+              setMapFocus(next);
+              if (next && !document.fullscreenElement) {
+                try {
+                  document.documentElement.requestFullscreen().catch(() => {});
+                } catch (e) {}
+              }
+            }}
+          >
             {mapFocus ? <><LayoutDashboard size={13} /> Show Panels</> : <><Maximize2 size={13} /> Expand Map</>}
           </button>
-          <button className="sim-button exit" onClick={onClose}>
+          <button className="sim-button exit" onClick={handleExit}>
             <X size={13} /> Exit Fullscreen <kbd>Esc</kbd>
           </button>
         </div>
@@ -246,7 +325,7 @@ export default function SimulationView({
               showReroutePanel={false}
               highlightedTargetId={highlightedTargetId}
               onTargetSelect={onTargetSelect}
-              showTargetDropdown={true}
+              showTargetDropdown={false}
               activeOrderRoute={activeOrderRoute}
               activeOrderRoutes={activeOrderRoutes}
               taskQueue={taskQueue}

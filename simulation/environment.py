@@ -3,6 +3,7 @@ Warehouse Simulation Environment [Member 2]
 Coordinates the 2D grid, AMR fleet lifecycle, and telemetry tick loop.
 """
 import logging
+import time
 from agents.exception_handling.logic.rerouter import Rerouter
 from typing import Dict, List, Any, Optional, Set, Tuple
 from .grid import WarehouseGrid
@@ -13,30 +14,42 @@ logger = logging.getLogger(__name__)
 
 # Semantic warehouse location name to walkable grid coordinates mapping
 LOCATION_MAP: Dict[str, Tuple[int, int]] = {
-    # Shelf A
+    # Shelf A (Access via Aisle 1 at cols 3 / 5)
     "shelf-a1": (3, 3),
     "shelf a1": (3, 3),
     "shelf-a2": (3, 4),
     "shelf a2": (3, 4),
     "shelf-a3": (3, 5),
     "shelf a3": (3, 5),
-    # Shelf B
-    "shelf-b1": (6, 3),
-    "shelf b1": (6, 3),
-    "shelf-b2": (6, 4),
-    "shelf b2": (6, 4),
-    "shelf-b3": (6, 5),
-    "shelf b3": (6, 5),
-    # Shelf C
-    "shelf-c1": (10, 3),
-    "shelf c1": (10, 3),
-    "shelf-c2": (10, 4),
-    "shelf c2": (10, 4),
-    # Shelf D
+    "shelf-a": (3, 3),
+    "shelf a": (3, 3),
+    # Shelf B (Access via Aisle 2 at col 8)
+    "shelf-b1": (8, 3),
+    "shelf b1": (8, 3),
+    "shelf-b2": (8, 4),
+    "shelf b2": (8, 4),
+    "shelf-b3": (8, 5),
+    "shelf b3": (8, 5),
+    "shelf-b": (8, 3),
+    "shelf b": (8, 3),
+    # Shelf C (Access via Aisle 3 at col 11)
+    "shelf-c1": (11, 3),
+    "shelf c1": (11, 3),
+    "shelf-c2": (11, 4),
+    "shelf c2": (11, 4),
+    "shelf-c3": (11, 5),
+    "shelf c3": (11, 5),
+    "shelf-c": (11, 3),
+    "shelf c": (11, 3),
+    # Shelf D (Access via Aisle 4 at col 14)
     "shelf-d1": (14, 3),
     "shelf d1": (14, 3),
     "shelf-d2": (14, 4),
     "shelf d2": (14, 4),
+    "shelf-d3": (14, 5),
+    "shelf d3": (14, 5),
+    "shelf-d": (14, 3),
+    "shelf d": (14, 3),
     # Packing Stations (Workstations at bottom-right)
     "station-1": (15, 12),
     "station 1": (15, 12),
@@ -122,18 +135,35 @@ class WarehouseEnvironment:
             return self._ensure_walkable((3, 4))
         if "shelf" in clean_name and "a3" in clean_name:
             return self._ensure_walkable((3, 5))
+        if "shelf" in clean_name and (" a" in clean_name or "-a" in clean_name or clean_name.endswith("a")):
+            return self._ensure_walkable((3, 3))
+
         if "shelf" in clean_name and "b1" in clean_name:
-            return self._ensure_walkable((6, 3))
+            return self._ensure_walkable((8, 3))
         if "shelf" in clean_name and "b2" in clean_name:
-            return self._ensure_walkable((6, 4))
+            return self._ensure_walkable((8, 4))
+        if "shelf" in clean_name and "b3" in clean_name:
+            return self._ensure_walkable((8, 5))
+        if "shelf" in clean_name and (" b" in clean_name or "-b" in clean_name or clean_name.endswith("b")):
+            return self._ensure_walkable((8, 3))
+
         if "shelf" in clean_name and "c1" in clean_name:
-            return self._ensure_walkable((10, 3))
+            return self._ensure_walkable((11, 3))
         if "shelf" in clean_name and "c2" in clean_name:
-            return self._ensure_walkable((10, 4))
+            return self._ensure_walkable((11, 4))
+        if "shelf" in clean_name and "c3" in clean_name:
+            return self._ensure_walkable((11, 5))
+        if "shelf" in clean_name and (" c" in clean_name or "-c" in clean_name or clean_name.endswith("c")):
+            return self._ensure_walkable((11, 3))
+
         if "shelf" in clean_name and "d1" in clean_name:
             return self._ensure_walkable((14, 3))
         if "shelf" in clean_name and "d2" in clean_name:
             return self._ensure_walkable((14, 4))
+        if "shelf" in clean_name and "d3" in clean_name:
+            return self._ensure_walkable((14, 5))
+        if "shelf" in clean_name and (" d" in clean_name or "-d" in clean_name or clean_name.endswith("d")):
+            return self._ensure_walkable((14, 3))
         if "station" in clean_name and "1" in clean_name:
             return self._ensure_walkable((15, 12))
         if "station" in clean_name and "2" in clean_name:
@@ -170,53 +200,119 @@ class WarehouseEnvironment:
         destination_name: Optional[str] = None,
         task_description: Optional[str] = None,
         item: Optional[str] = None,
-        qty: Optional[int] = None
+        qty: Optional[int] = None,
+        sub_orders: Optional[List[Dict[str, Any]]] = None
     ) -> List[Tuple[int, int]]:
         """
-        Dispatches an order to an AMR by mapping source and destination to grid coordinates
-        and calculating the logical route: Current Pos -> Source -> Destination.
+        Dispatches an order to an AMR by mapping source and destination to grid coordinates.
+        Supports single orders as well as multi-drop compound orders originating from a shared source:
+        1. If sub_orders are provided (or extracted from task_description) sharing a source:
+           - Batches all items together at the source.
+           - Calculates distance from the shared source to all candidate destinations.
+           - Sorts destinations by distance from source in ascending order (nearest first).
+           - Computes collision-free A* detour route: Robot -> Source -> Stop 1 -> Stop 2 -> ... -> Stop N.
+           - Robot loads all items at source (with loading duration), unloads at Stop 1 (with unloading duration),
+             resumes travel to Stop 2, unloads at Stop 2, and completes to IDLE.
         """
         robot = self.robots.get(robot_id)
         if not robot:
             logger.warning("Cannot dispatch order: robot %s not found.", robot_id)
             return []
 
-        source_pos = self.resolve_location(source_name)
-        dest_pos = self.resolve_location(destination_name) or (16, 12)
+        # If sub_orders not passed explicitly, attempt extraction from task_description as a fallback
+        if not sub_orders and task_description:
+            try:
+                from agents.task_planning.nodes.parse_order import _rule_based_parse_order
+                parsed_check = _rule_based_parse_order(task_description)
+                if parsed_check and parsed_check.get("multi_drop"):
+                    sub_orders = parsed_check.get("sub_orders")
+            except Exception as e:
+                logger.debug("Fallback rule_based_parse_order in dispatch_order_to_robot: %s", e)
 
         rerouter = Rerouter()
         grid_bounds = (self.grid.width, self.grid.height)
-        
+
+        # Check if this is a multi-drop order sharing a source
+        is_multi_drop = False
+        ordered_stops: List[Dict[str, Any]] = []
+        combined_item_str = item or "pallets"
+        source_pos = self.resolve_location(source_name)
+
+        if sub_orders and len(sub_orders) >= 2:
+            resolved_srcs = [self.resolve_location(so.get("source")) for so in sub_orders if so.get("source")]
+            if resolved_srcs and all(s == resolved_srcs[0] for s in resolved_srcs):
+                is_multi_drop = True
+                source_pos = resolved_srcs[0]
+                source_name = sub_orders[0].get("source") or source_name
+
+                # Combine item summary (e.g. "5 pallets & 3 tiles pack")
+                item_labels = [f"{so.get('quantity', 1)} {so.get('item', 'items')}".strip() for so in sub_orders]
+                combined_item_str = " & ".join(item_labels)
+
+                # Prepare candidate delivery stops with distance from source_pos
+                candidate_stops = []
+                for idx, so in enumerate(sub_orders):
+                    dst_name = so.get("destination") or "destination"
+                    dst_pos = self.resolve_location(dst_name) or (16, 12)
+                    dist = abs(dst_pos[0] - source_pos[0]) + abs(dst_pos[1] - source_pos[1])
+                    candidate_stops.append({
+                        "name": dst_name,
+                        "location": dst_pos,
+                        "item": f"{so.get('quantity', 1)} {so.get('item', 'items')}".strip(),
+                        "quantity": so.get("quantity", 1),
+                        "dist_from_source": dist,
+                        "original_index": idx
+                    })
+
+                # Sort by distance from source: NEAREST FIRST!
+                ordered_stops = sorted(candidate_stops, key=lambda s: (s["dist_from_source"], s["original_index"]))
+
+        if not is_multi_drop:
+            # Single-destination order
+            dest_pos = self.resolve_location(destination_name) or (16, 12)
+            ref_pos = source_pos or robot.position
+            dist = abs(dest_pos[0] - ref_pos[0]) + abs(dest_pos[1] - ref_pos[1])
+            ordered_stops = [{
+                "name": destination_name or "destination",
+                "location": dest_pos,
+                "item": item or "pallets",
+                "quantity": qty or 1,
+                "dist_from_source": dist
+            }]
+        else:
+            dest_pos = ordered_stops[-1]["location"]
+
+        # Compute multi-leg collision-free path:
+        # Leg 0: robot.position -> source_pos (if source specified and robot not already there)
+        # Leg 1: source_pos -> stop 1
+        # Leg 2: stop 1 -> stop 2 ...
         full_path: List[Tuple[int, int]] = []
         if source_pos and source_pos != robot.position:
-            # Segment 1: robot.position -> source_pos
             path_to_source = rerouter.calculate_detour(
                 start=robot.position,
                 goal=source_pos,
                 blocked_cells=self.grid.blocked_cells,
                 grid_bounds=grid_bounds
             )
-            # Segment 2: source_pos -> dest_pos
-            path_to_dest = rerouter.calculate_detour(
-                start=source_pos,
-                goal=dest_pos,
-                blocked_cells=self.grid.blocked_cells,
-                grid_bounds=grid_bounds
-            )
-
             if path_to_source:
                 full_path.extend(path_to_source)
-                if path_to_dest and len(path_to_dest) > 1:
-                    full_path.extend(path_to_dest[1:])
-            elif path_to_dest:
-                full_path.extend(path_to_dest)
+            current_from = source_pos
         else:
-            full_path = rerouter.calculate_detour(
-                start=robot.position,
-                goal=dest_pos,
+            current_from = robot.position
+
+        for stop in ordered_stops:
+            leg = rerouter.calculate_detour(
+                start=current_from,
+                goal=stop["location"],
                 blocked_cells=self.grid.blocked_cells,
                 grid_bounds=grid_bounds
             )
+            if leg:
+                if full_path:
+                    full_path.extend(leg[1:] if len(leg) > 1 else [])
+                else:
+                    full_path.extend(leg)
+                current_from = stop["location"]
 
         waypoints = full_path[1:] if len(full_path) > 1 else []
         if not waypoints:
@@ -225,35 +321,58 @@ class WarehouseEnvironment:
             robot.final_destination = dest_pos
             robot.intermediate_target = None
             robot.waypoints = []
+            robot.delivery_stops = []
+            robot.current_stop_index = 0
             robot.state = RobotState.IDLE
             return full_path
 
-        robot.destination = dest_pos
+        first_stop = ordered_stops[0]
+        final_stop = ordered_stops[-1]
+
+        robot.destination = first_stop["location"]
+        robot.destination_name = first_stop["name"]
+        robot.final_destination = final_stop["location"]
         robot.intermediate_target = source_pos if (source_pos and source_pos != robot.position) else None
-        robot.final_destination = dest_pos
         robot.waypoints = waypoints
+        robot.delivery_stops = [
+            {
+                "name": s["name"],
+                "location": s["location"],
+                "item": s["item"],
+                "quantity": s.get("quantity", 1)
+            }
+            for s in ordered_stops
+        ]
+        robot.current_stop_index = 0
         robot.state = RobotState.MOVING
         robot.is_rerouted = False
         robot.stuck_duration = 0.0
-        robot.current_task_id = task_description or f"Order: {source_name} to {destination_name}"
+        robot.current_task_id = task_description or f"Order: {source_name} to {final_stop['name']}"
 
         # Initialize source, item and loading tracker
         robot.source_pos = source_pos
         robot.source_name = source_name
-        robot.destination_name = destination_name
-        robot.item = item or "pallets"
+        robot.item = combined_item_str
         robot.source_active = bool(source_pos and source_pos != robot.position)
-        robot.loaded = False
         robot.loading_duration = 0.0
-        robot.status_text = (
-            f"Heading to {source_name or 'source'} to collect {robot.item}"
-            if robot.source_active
-            else f"Heading to {destination_name}"
-        )
+        robot.unloading_duration = 0.0
+
+        if not robot.source_active:
+            if source_pos == robot.position:
+                robot.state = RobotState.PICKING
+                robot.loading_duration = 3.0
+                robot.loaded = False
+                robot.status_text = f"Loading all items ({robot.item}) from {robot.source_name or 'source'} (3s)..."
+            else:
+                robot.loaded = True
+                robot.status_text = f"Heading to {first_stop['name']}"
+        else:
+            robot.loaded = False
+            robot.status_text = f"Heading to {source_name or 'source'} to collect {robot.item}"
 
         logger.info(
-            "Dispatched robot %s along %d waypoints (Goal: %s via %s)",
-            robot_id, len(robot.waypoints), dest_pos, source_pos
+            "Dispatched robot %s along %d waypoints (Stops: %s, Goal: %s via %s)",
+            robot_id, len(robot.waypoints), [s['name'] for s in ordered_stops], final_stop['location'], source_pos
         )
         return full_path
 
@@ -643,9 +762,12 @@ class WarehouseEnvironment:
                 if r.enabled and r.state == RobotState.IDLE and not r.waypoints and r.battery > 20.0
             ]
             if idle_robots:
-                next_order = self.task_queue.pop(0)
-                source_name = next_order.get("source_name")
-                destination_name = next_order.get("destination_name")
+                parsed_dict = next_order.get("parsed_order") or {}
+                source_name = next_order.get("source_name") or parsed_dict.get("source")
+                destination_name = next_order.get("destination_name") or parsed_dict.get("destination")
+                sub_orders = next_order.get("sub_orders") or parsed_dict.get("sub_orders")
+                item = next_order.get("item") or parsed_dict.get("item")
+                qty = next_order.get("qty") or parsed_dict.get("quantity")
                 source_pos = self.resolve_location(source_name)
 
                 # Prioritize nearest idle robot to the source position
@@ -668,8 +790,9 @@ class WarehouseEnvironment:
                     source_name=source_name,
                     destination_name=destination_name,
                     task_description=next_order.get("order_text"),
-                    item=next_order.get("item"),
-                    qty=next_order.get("qty")
+                    item=item,
+                    qty=qty,
+                    sub_orders=sub_orders
                 )
 
         return anomalies

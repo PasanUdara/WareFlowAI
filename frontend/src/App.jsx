@@ -1023,9 +1023,15 @@ function App() {
               fleet={mapFleet}
               blockedCells={mapBlockedCells}
               selectedRobotId={selectedRobotId}
-              onSelectRobot={setSelectedRobotId}
-              onFullscreen={(focus = false) => { setSimulationInitialFocus(Boolean(focus)); setSimulationOpen(true); }}
-              onInject={handleInjectAnomaly}
+              onFullscreen={(focus = false) => {
+                setSimulationInitialFocus(Boolean(focus));
+                setSimulationOpen(true);
+                try {
+                  if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                  }
+                } catch (e) {}
+              }}
               onClear={handleClearObstacles}
               events={activityLogs}
               mockMode={mockMode}

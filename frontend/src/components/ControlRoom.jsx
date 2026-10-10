@@ -213,8 +213,15 @@ export default function ControlRoom({
               </button>
               <button
                 className="map-subaction-btn fullscreen"
-                onClick={() => onFullscreen?.(true)}
-                title="Expand map to whole full screen"
+                onClick={() => {
+                  try {
+                    if (!document.fullscreenElement) {
+                      document.documentElement.requestFullscreen().catch(() => {});
+                    }
+                  } catch (e) {}
+                  onFullscreen?.(true);
+                }}
+                title="Expand map to whole 1080p fullscreen"
               >
                 <Maximize2 size={12} /> Expand map
               </button>

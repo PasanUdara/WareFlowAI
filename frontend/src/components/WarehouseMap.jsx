@@ -29,12 +29,14 @@ export const statusMeta = (robot) => {
   const isStuck = robot.enabled === false || state === 'stuck' || state === 'error';
   const isCharging = state === 'charging';
   const isPicking = state === 'picking' || Boolean(robot.payload);
+  const isUnloading = state === 'unloading';
   const isMoving = state === 'moving';
   const isRerouting = Boolean(robot.is_rerouted || robot.detour_path || robot.avoiding_obstacle);
 
   if (isStuck) return { key: 'stuck', icon: 'x', label: 'STUCK', sublabel: 'Cannot proceed', color: '#ef4444' };
   if (isCharging) return { key: 'charging', icon: 'zap', label: 'CHARGING', sublabel: 'Recharging battery', color: '#22c55e' };
   if (isPicking) return { key: 'picking', icon: 'package', label: 'PICKING', sublabel: 'Collecting item from shelf', color: '#00ff88' };
+  if (isUnloading) return { key: 'unloading', icon: 'package', label: 'UNLOADING', sublabel: 'Unloading items at destination', color: '#38bdf8' };
   if (isRerouting) return { key: 'rerouting', icon: 'alert', label: 'ATTENTION', sublabel: 'Obstacle detected ahead', color: '#fbbf24' };
   if (isMoving) return { key: 'moving', icon: 'arrow-right', label: 'MOVING', sublabel: 'Following assigned route', color: ACCENTS[robot.robot_id] || '#00f0ff' };
   return { key: 'idle', icon: 'pause', label: 'IDLE', sublabel: 'Waiting for next task', color: '#00f0ff' };
@@ -110,6 +112,7 @@ export function RobotSprite({ robot, selected, onSelect }) {
   const isStuck = meta.key === 'stuck';
   const isCharging = meta.key === 'charging';
   const isPicking = meta.key === 'picking';
+  const isUnloading = meta.key === 'unloading';
   const isAttention = meta.key === 'rerouting';
 
   const posStyle = cellToPercent(robot.x, robot.y);
@@ -189,8 +192,8 @@ export function RobotSprite({ robot, selected, onSelect }) {
         {/* Directional Chevron if Moving */}
         {isMoving && <span className="direction-chevron"><ChevronUp size={11} strokeWidth={2.5} /></span>}
 
-        {/* 3D Cargo Box if Picking / Carrying / Loaded */}
-        {(isPicking || robot.loaded || (isMoving && robot.source_active === false && robot.destination_name)) && (
+        {/* 3D Cargo Box if Picking / Unloading / Carrying / Loaded */}
+        {(isPicking || isUnloading || robot.loaded || (isMoving && robot.source_active === false && robot.destination_name)) && (
           <div className="cargo-box-3d" title="Payload Box">
             <div className="box-face box-top" />
             <div className="box-face box-front">
@@ -212,6 +215,7 @@ export function RobotSprite({ robot, selected, onSelect }) {
       {/* 6. Dynamic Floating Action / Loading Speech Bubble around Robot */}
       {(() => {
         const isLoading = isPicking || robot.is_loading || (robot.loading_duration && robot.loading_duration > 0);
+        const isUnloadingState = isUnloading || (robot.unloading_duration && robot.unloading_duration > 0);
         const hasLoaded = robot.loaded || (isMoving && robot.source_active === false && robot.destination_name);
         const statusMsg = robot.status_text;
 
@@ -221,6 +225,17 @@ export function RobotSprite({ robot, selected, onSelect }) {
               <span className="loading-spinner-dot" />
               <span className="status-label">
                 {statusMsg || `Loading ${robot.item || 'items'}...`}
+              </span>
+            </div>
+          );
+        }
+
+        if (isUnloadingState) {
+          return (
+            <div className="amr-floating-status unloading">
+              <span className="unloading-spinner-dot" />
+              <span className="status-label">
+                {statusMsg || `Unloading ${robot.item || 'items'}...`}
               </span>
             </div>
           );
@@ -385,6 +400,12 @@ function RouteOverlay({ fleet, blockedCells = [] }) {
 
         const goal = cellPoint(robot.destination || robot.goal || robot.final_destination);
         const goalPx = goal ? cellToPixels(goal.x, goal.y) : null;
+        const deliveryStops = Array.isArray(robot.delivery_stops)
+          ? robot.delivery_stops.map((ds, idx) => {
+              const cp = cellPoint(ds.location);
+              return cp ? { ...cellToPixels(cp.x, cp.y), name: ds.name, index: idx + 1 } : null;
+            }).filter(Boolean)
+          : [];
 
         if (points.length >= 2) {
           normal.push({
@@ -394,6 +415,7 @@ function RouteOverlay({ fleet, blockedCells = [] }) {
             haloColor: conf.halo,
             glowFilter: conf.glowFilter,
             goalPx,
+            deliveryStops,
             isDetour: false
           });
         }
@@ -565,8 +587,24 @@ function RouteOverlay({ fleet, blockedCells = [] }) {
               </g>
             ))}
 
-            {/* Destination Goal Flag & Robot Badge */}
-            {rt.goalPx && (
+            {/* Destination Goal Flag & Multi-Stop Delivery Markers */}
+            {rt.deliveryStops && rt.deliveryStops.length > 1 ? (
+              rt.deliveryStops.map((stop, sIdx) => (
+                <g key={`stop-${sIdx}`} transform={`translate(${stop.x}, ${stop.y})`} className="goal-flag-marker multi-stop">
+                  <circle r="14" fill={rt.color} fillOpacity="0.22" stroke={rt.color} strokeWidth="1.6" />
+                  <circle r="7.5" fill="#020617" stroke={rt.color} strokeWidth="2" />
+                  <text x="0" y="3" fontSize="9" fontWeight="900" fill="#ffffff" textAnchor="middle">
+                    {stop.index}
+                  </text>
+                  <g transform="translate(10, 13)">
+                    <rect x="-4" y="-9" width="38" height="13" rx="3" fill="#020617" stroke={rt.color} strokeWidth="1" />
+                    <text x="15" y="1" fontSize="8" fontWeight="800" fill={rt.color} textAnchor="middle">
+                      {`Stop ${stop.index}`}
+                    </text>
+                  </g>
+                </g>
+              ))
+            ) : rt.goalPx ? (
               <g transform={`translate(${rt.goalPx.x}, ${rt.goalPx.y})`} className="goal-flag-marker">
                 <circle r="14" fill={rt.color} fillOpacity="0.22" stroke={rt.color} strokeWidth="1.6" />
                 <circle r="6" fill="#020617" stroke={rt.color} strokeWidth="2.5" />
@@ -582,7 +620,7 @@ function RouteOverlay({ fleet, blockedCells = [] }) {
                   </text>
                 </g>
               </g>
-            )}
+            ) : null}
           </g>
         );
       })}
@@ -714,7 +752,7 @@ export default function WarehouseMap({
   const isStaticInfrastructure = (x, y) => {
     const nx = Number(x);
     const ny = Number(y);
-    const isShelf = [4, 5, 8, 9, 12, 13, 16, 17].includes(nx) && ny >= 3 && ny <= 9;
+    const isShelf = [6, 7, 9, 10, 12, 13, 15, 16].includes(nx) && ny >= 3 && ny <= 9;
     const isChargingDock = ny >= 11 && ny <= 14 && nx >= 1 && nx <= 4;
     const isWorkstation = ny >= 11 && ny <= 14 && nx >= 14 && nx <= 18;
     const isRestricted = ny >= 11 && ny <= 14 && nx >= 7 && nx <= 12;

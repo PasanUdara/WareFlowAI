@@ -80,19 +80,44 @@ def decompose_tasks(state: TaskPlanningState) -> Dict[str, Any]:
         logger.warning("Unexpected error in decompose_tasks (%s), using fallback", exc)
 
     # -------------------------------------------------------------------
-    # Rule-based fallback: navigate → pick → navigate → drop
+    # Rule-based fallback: navigate → pick → navigate → drop (with multi-drop support)
     # -------------------------------------------------------------------
     item = parsed_order.get("item", "UNKNOWN")
     qty = parsed_order.get("quantity", 1)
     source = parsed_order.get("source", "UNKNOWN")
     destination = parsed_order.get("destination", "UNKNOWN")
+    sub_orders = parsed_order.get("sub_orders")
 
-    fallback_subtasks = [
-        {"step": 1, "action": "navigate", "target": source, "item": None, "qty": None},
-        {"step": 2, "action": "pick", "target": source, "item": item, "qty": qty},
-        {"step": 3, "action": "navigate", "target": destination, "item": None, "qty": None},
-        {"step": 4, "action": "drop", "target": destination, "item": item, "qty": qty},
-    ]
+    if sub_orders and isinstance(sub_orders, list):
+        fallback_subtasks = [
+            {"step": 1, "action": "navigate", "target": source, "item": None, "qty": None},
+            {"step": 2, "action": "pick", "target": source, "item": item, "qty": qty},
+        ]
+        step_num = 3
+        for sub in sub_orders:
+            fallback_subtasks.append({
+                "step": step_num,
+                "action": "navigate",
+                "target": sub.get("destination", destination),
+                "item": None,
+                "qty": None
+            })
+            step_num += 1
+            fallback_subtasks.append({
+                "step": step_num,
+                "action": "drop",
+                "target": sub.get("destination", destination),
+                "item": sub.get("item", item),
+                "qty": sub.get("quantity", 1)
+            })
+            step_num += 1
+    else:
+        fallback_subtasks = [
+            {"step": 1, "action": "navigate", "target": source, "item": None, "qty": None},
+            {"step": 2, "action": "pick", "target": source, "item": item, "qty": qty},
+            {"step": 3, "action": "navigate", "target": destination, "item": None, "qty": None},
+            {"step": 4, "action": "drop", "target": destination, "item": item, "qty": qty},
+        ]
 
     logger.info("Fallback decomposition produced %d steps", len(fallback_subtasks))
     return {"subtasks": fallback_subtasks, "status": "decomposed"}

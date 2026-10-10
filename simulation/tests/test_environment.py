@@ -146,4 +146,82 @@ def test_reroute_preserves_two_stage_intermediate_target():
     # The rerouted path must still visit Shelf-A1 (3, 3) and end at Station-1 (15, 12)
     assert (3, 3) in rerouted_path
     assert rerouted_path[-1] == (15, 12)
-    assert rerouted_path.index((3, 3)) < rerouted_path.index((15, 12))
+    assert rerouted_path.index((3, 3)) < rerouted_path.index((15, 12))
+
+
+def test_dispatch_multi_drop_order_nearest_first_and_unloads():
+    """
+    Verifies multi-drop compound orders:
+    'move 5 pallets from shelf A to shelf C1 and 3 tiles pack to packing station 3'
+    - Shared pickup at Shelf A (3, 3) loads all items
+    - Drops nearest destination first (Shelf C1 at distance 8 before Packing Station 3 at distance 23)
+    - Unloads at first destination with 3s countdown, then travels to second and unloads
+    """
+    env = WarehouseEnvironment(width=20, height=15, num_robots=1)
+    robot = env.robots["R1"]
+    robot.position = (1, 13)
+
+    sub_orders = [
+        {"item": "pallets", "quantity": 5, "source": "shelf A", "destination": "shelf C1"},
+        {"item": "tiles pack", "quantity": 3, "source": "shelf A", "destination": "packing station 3"}
+    ]
+
+    path = env.dispatch_order_to_robot(
+        robot_id="R1",
+        source_name="shelf A",
+        destination_name="shelf C1",
+        task_description="move 5 pallets from shelf A to shelf C1 and 3 tiles pack to packing station 3",
+        sub_orders=sub_orders
+    )
+
+    assert path
+    assert len(robot.delivery_stops) == 2
+    # Nearest stop first: Shelf C1 (11, 3)
+    assert robot.delivery_stops[0]["name"] == "shelf C1"
+    assert tuple(robot.delivery_stops[0]["location"]) == (11, 3)
+    assert robot.delivery_stops[1]["name"] == "packing station 3"
+    assert tuple(robot.delivery_stops[1]["location"]) == (17, 12)
+
+    # 1. Travel to source
+    while robot.position != (3, 3):
+        env.tick(0.5)
+
+    assert robot.state == RobotState.PICKING
+    assert robot.position == (3, 3)
+
+    # 2. Loading finishes
+    while robot.state == RobotState.PICKING:
+        env.tick(0.5)
+
+    assert robot.loaded is True
+    assert robot.state == RobotState.MOVING
+
+    # 3. Travel to nearest stop (Shelf C1)
+    while robot.position != (11, 3):
+        env.tick(0.5)
+
+    assert robot.state == RobotState.UNLOADING
+    assert "shelf C1" in robot.status_text
+
+    # 4. Unload at Shelf C1
+    while robot.state == RobotState.UNLOADING:
+        env.tick(0.5)
+
+    assert robot.current_stop_index == 1
+    assert robot.destination == (17, 12)
+    assert robot.state == RobotState.MOVING
+
+    # 5. Travel to second stop (Packing Station 3)
+    while robot.position != (17, 12):
+        env.tick(0.5)
+
+    assert robot.state == RobotState.UNLOADING
+    assert "packing station 3" in robot.status_text
+
+    # 6. Unload at Packing Station 3
+    while robot.state == RobotState.UNLOADING:
+        env.tick(0.5)
+
+    assert robot.state == RobotState.IDLE
+    assert robot.loaded is False
+

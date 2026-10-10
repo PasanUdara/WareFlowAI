@@ -34,7 +34,8 @@ class WarehouseGrid:
             self.dropoff_stations.add((x, dropoff_y))
             
         # Storage shelves in central columns (rows 3 to 9 on standard 20x15)
-        shelf_cols = [4, 5, 8, 9, 12, 13, 16, 17] if self.width >= 18 else [x for x in [4, 5, 8] if x < self.width]
+        # Accurately matches digital twin canvas: Shelf A (6,7), Shelf B (9,10), Shelf C (12,13), Shelf D (15,16)
+        shelf_cols = [6, 7, 9, 10, 12, 13, 15, 16] if self.width >= 18 else [x for x in [6, 7, 9] if x < self.width]
         for y in range(3, min(10, self.height - 3)):
             for x in shelf_cols:
                 self.shelves.add((x, y))

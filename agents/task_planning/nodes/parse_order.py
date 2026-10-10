@@ -40,6 +40,87 @@ def _rule_based_parse_order(order_text: str) -> Optional[Dict[str, Any]]:
     """
     clean_text = order_text.strip().rstrip(".").rstrip(",")
 
+    # Compound multi-drop pattern A: "move <qty1> <item1> and <qty2> <item2> from <src> to <dst1> and <dst2>"
+    m_split = re.match(
+        r"^(?:(?:fetch|move|transport|bring|carry|transfer|deliver|pick\s+up|shift)\s+)?(?:(\d+)\s+)?(.*?)\s+and\s+(?:(\d+)\s+)?(.*?)\s+from\s+(.*?)\s+to\s+(.*?)\s+and\s+(.*)$",
+        clean_text,
+        re.IGNORECASE
+    )
+    if m_split:
+        q1, itm1, q2, itm2, src, dst1, dst2 = m_split.groups()
+        legs = [
+            {"item": itm1.strip(), "quantity": int(q1) if q1 else 1, "source": src.strip(), "destination": dst1.strip()},
+            {"item": itm2.strip(), "quantity": int(q2) if q2 else 1, "source": src.strip(), "destination": dst2.strip()}
+        ]
+        summary_item = " & ".join(f"{l['quantity']} {l['item']}".strip() for l in legs)
+        total_qty = sum(l["quantity"] for l in legs)
+        return {
+            "item": summary_item,
+            "quantity": total_qty,
+            "source": src.strip(),
+            "destination": dst1.strip(),
+            "multi_drop": True,
+            "sub_orders": legs
+        }
+
+    # Compound multi-drop pattern B: Clauses separated by ' and '
+    # e.g. "move 5 pallets from shelf A to shelf C1 and 3 tiles pack to packing station 3"
+    if " and " in clean_text.lower():
+        parts = [p.strip() for p in re.split(r"\s+and\s+", clean_text, flags=re.IGNORECASE) if p.strip()]
+        if len(parts) >= 2:
+            legs = []
+            default_source = None
+            for part in parts:
+                m_from_to = re.match(
+                    r"^(?:(?:fetch|move|transport|bring|carry|transfer|deliver|pick\s+up|shift)\s+)?(?:(\d+)\s+)?(.*?)\s+from\s+(.*?)\s+to\s+(.*)$",
+                    part,
+                    re.IGNORECASE
+                )
+                if m_from_to:
+                    q_str, itm, src, dst = m_from_to.groups()
+                    clean_itm = re.sub(r"^(?:fetch|move|transport|bring|carry|transfer|deliver|pick\s+up|shift)\s+", "", itm.strip(), flags=re.IGNORECASE)
+                    default_source = src.strip()
+                    legs.append({
+                        "item": clean_itm.strip() or "item",
+                        "quantity": int(q_str) if q_str else 1,
+                        "source": default_source,
+                        "destination": dst.strip()
+                    })
+                    continue
+
+                m_to = re.match(
+                    r"^(?:(?:fetch|move|transport|bring|carry|transfer|deliver|pick\s+up|shift)\s+)?(?:(\d+)\s+)?(.*?)\s+to\s+(.*)$",
+                    part,
+                    re.IGNORECASE
+                )
+                if m_to:
+                    q_str, itm, dst = m_to.groups()
+                    clean_itm = re.sub(r"^(?:fetch|move|transport|bring|carry|transfer|deliver|pick\s+up|shift)\s+", "", itm.strip(), flags=re.IGNORECASE)
+                    legs.append({
+                        "item": clean_itm.strip() or "item",
+                        "quantity": int(q_str) if q_str else 1,
+                        "source": default_source or "UNKNOWN",
+                        "destination": dst.strip()
+                    })
+                    continue
+
+            if len(legs) >= 2:
+                first_src = next((l["source"] for l in legs if l["source"] != "UNKNOWN"), "UNKNOWN")
+                for l in legs:
+                    if l["source"] == "UNKNOWN":
+                        l["source"] = first_src
+
+                summary_item = " & ".join(f"{l['quantity']} {l['item']}".strip() for l in legs)
+                total_qty = sum(l["quantity"] for l in legs)
+                return {
+                    "item": summary_item,
+                    "quantity": total_qty,
+                    "source": legs[0]["source"],
+                    "destination": legs[0]["destination"],
+                    "multi_drop": True,
+                    "sub_orders": legs
+                }
+
     # Pattern 1: <Action> [Qty] <Item> from <Source> to <Destination>
     pattern1 = re.compile(
         r"^(?:fetch|move|transport|bring|carry|transfer|deliver|pick\s+up|shift)\s+"
@@ -145,6 +226,10 @@ def parse_order(state: TaskPlanningState) -> Dict[str, Any]:
                 missing = required_keys - set(parsed.keys())
                 logger.error("Groq response missing keys: %s", missing)
             else:
+                rule_parsed = _rule_based_parse_order(order_text)
+                if rule_parsed and rule_parsed.get("multi_drop"):
+                    parsed["multi_drop"] = True
+                    parsed["sub_orders"] = rule_parsed["sub_orders"]
                 logger.info("Order parsed successfully via Groq: %s", parsed)
                 return {"parsed_order": parsed, "status": "parsed"}
 
