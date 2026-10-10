@@ -128,3 +128,48 @@ def test_invalid_robot_data_validation():
     resp2 = client.post("/api/v1/fleet/robots", json=empty_id, headers=get_auth_header())
     assert resp2.status_code == 400
     assert "cannot be empty" in resp2.json()["detail"]
+
+
+def test_task_queue_auto_dispatch():
+    """Verify pending queued order is popped and auto-dispatched to an idle robot during tick()."""
+    order = {
+        "order_id": "TEST-QUEUE-1",
+        "order_text": "Move pallets from Shelf-A1 to Station-1",
+        "source_name": "Shelf-A1",
+        "destination_name": "Station-1",
+        "item": "pallets",
+        "qty": 2
+    }
+    sim_env.queue_order(order)
+    initial_queue_len = len(sim_env.task_queue)
+    sim_env.tick(delta_time=0.5)
+    assert len(sim_env.task_queue) == initial_queue_len - 1
+    assert any(r.current_task_id == order["order_text"] for r in sim_env.robots.values())
+
+
+def test_closest_robot_priority_assignment():
+    """Verify that when an order is dispatched, the robot closest to the pickup source is prioritized."""
+    # Place R3 at packing station 3 (17, 12) with 57% battery
+    # Place other robots at charging bays (2, 13) with 100% battery
+    from simulation.robot import RobotState
+    for rid, r in sim_env.robots.items():
+        r.waypoints = []
+        r.state = RobotState.IDLE
+        if rid == "R3":
+            r.position = (17, 12)
+            r.battery = 57.0
+        else:
+            r.position = (2, 13)
+            r.battery = 100.0
+
+    order_payload = {
+        "order_text": "move 5 parcells from packing station 3 to shelf deck A"
+    }
+    resp = client.post("/api/v1/orders/dispatch", json=order_payload, headers=get_auth_header())
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    # R3 must be assigned because it is closest (distance 0 at packing station 3)
+    assert data["assigned_robot_id"] == "R3"
+
+

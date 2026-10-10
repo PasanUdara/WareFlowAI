@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import WarehouseMap, { statusMeta } from './WarehouseMap';
-import { ShoppingCart, BarChart3, AlertTriangle, Play, Pause, X, Activity, Cpu, Maximize2, Bot, ClipboardList, Battery, Construction, RotateCcw } from './icons';
+import { ShoppingCart, BarChart3, AlertTriangle, Play, Pause, X, Activity, Cpu, Maximize2, Bot, ClipboardList, Battery, Construction, RotateCcw, Plus } from './icons';
 
 const ROBOT_DESTINATIONS = {
   R1: { target: 'To Aisle B3', route: '(4, 6) → (4, 2)' },
@@ -224,6 +224,20 @@ export default function ControlRoom({
                 title="Expand map to whole 1080p fullscreen"
               >
                 <Maximize2 size={12} /> Expand map
+              </button>
+              <button
+                className="map-subaction-btn order-create-btn"
+                onClick={() => {
+                  try {
+                    if (!document.fullscreenElement) {
+                      document.documentElement.requestFullscreen().catch(() => {});
+                    }
+                  } catch (e) {}
+                  onFullscreen?.(true, true);
+                }}
+                title="Expand map and open Create Order dialog"
+              >
+                <Plus size={12} /> Create Order
               </button>
             </div>
           </div>

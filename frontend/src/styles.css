@@ -3406,4 +3406,373 @@
   color: #38bdf8;
 }
 
+/* ==========================================================================
+   SIMULATION / EXPANDED MAP CREATE ORDER MODAL & CONTROLS
+   ========================================================================== */
+
+.focus-hud-btn.order-create-hud-btn {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: #60a5fa;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+}
+
+.focus-hud-btn.order-create-hud-btn:hover {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.7);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.sim-button.order-btn {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: #60a5fa;
+  color: #fff;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sim-button.order-btn:hover {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 0 14px rgba(59, 130, 246, 0.5);
+  color: #fff;
+}
+
+.map-subaction-btn.order-create-btn {
+  background: linear-gradient(135deg, #1d4ed8, #2563eb);
+  border-color: #60a5fa;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.35);
+}
+
+.map-subaction-btn.order-create-btn:hover {
+  background: #3b82f6;
+  color: #fff;
+  box-shadow: 0 0 14px rgba(59, 130, 246, 0.6);
+}
+
+.stage-caption-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.stage-quick-order-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.25);
+  border: 1px solid rgba(96, 165, 250, 0.5);
+  color: #93c5fd;
+  font: 700 10px 'Manrope', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.stage-quick-order-btn:hover {
+  background: #2563eb;
+  border-color: #93c5fd;
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.6);
+}
+
+/* Modal Overlay & Card inside SimulationView */
+.sim-order-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 7, 18, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+  animation: fadeIn 0.18s ease-out;
+}
+
+.sim-order-modal-card {
+  width: min(540px, 95vw);
+  background: linear-gradient(165deg, rgba(17, 27, 46, 0.96) 0%, rgba(13, 20, 36, 0.98) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 24px rgba(56, 189, 248, 0.2);
+  padding: 22px 24px;
+  color: #f1f5f9;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: modalScaleIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.sim-order-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.sim-order-title-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.sim-order-icon-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(37, 99, 235, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #38bdf8;
+  flex-shrink: 0;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+}
+
+.sim-order-title-wrap h3 {
+  margin: 0;
+  font: 700 16px 'Manrope', sans-serif;
+  color: #f8fafc;
+  letter-spacing: -0.2px;
+}
+
+.sim-order-title-wrap p {
+  margin: 3px 0 0;
+  font: 500 12px 'Manrope', sans-serif;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.sim-order-close-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.sim-order-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
+}
+
+/* Presets */
+.sim-order-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sim-order-presets-label {
+  font: 700 10px 'DM Mono', monospace;
+  color: #64748b;
+  letter-spacing: 0.5px;
+}
+
+.sim-order-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sim-order-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  font: 600 11px 'Manrope', sans-serif;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sim-order-chip:hover {
+  background: rgba(51, 65, 85, 0.9);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+  transform: translateY(-1px);
+}
+
+/* Textarea Input */
+.sim-order-input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sim-order-textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(11, 19, 34, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: #f8fafc;
+  font: 500 13px 'Manrope', sans-serif;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.sim-order-textarea:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
+  background: rgba(11, 19, 34, 0.95);
+}
+
+.sim-order-textarea::placeholder {
+  color: #64748b;
+}
+
+.sim-order-input-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 500 11px 'DM Mono', monospace;
+  color: #64748b;
+  padding: 0 2px;
+}
+
+.sim-order-clear-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font: 600 11px 'Manrope', sans-serif;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.sim-order-clear-btn:hover {
+  color: #f8fafc;
+}
+
+/* Feedback / Alert */
+.sim-order-feedback {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.sim-order-feedback.error {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+.sim-order-feedback.success {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #6ee7b7;
+}
+
+.sim-order-feedback.success strong {
+  display: block;
+  font-weight: 700;
+  color: #a7f3d0;
+}
+
+.sim-order-feedback.success small {
+  display: block;
+  color: #6ee7b7;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+/* Modal Actions */
+.sim-order-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.sim-order-cancel-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  font: 600 12px 'Manrope', sans-serif;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sim-order-cancel-btn:hover {
+  background: rgba(51, 65, 85, 0.9);
+  color: #fff;
+}
+
+.sim-order-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border: 1px solid #60a5fa;
+  color: #ffffff;
+  font: 700 12px 'Manrope', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+}
+
+.sim-order-submit-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.6);
+  transform: translateY(-1px);
+}
+
+.sim-order-submit-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 

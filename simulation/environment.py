@@ -3,6 +3,7 @@ Warehouse Simulation Environment [Member 2]
 Coordinates the 2D grid, AMR fleet lifecycle, and telemetry tick loop.
 """
 import logging
+import re
 import time
 from agents.exception_handling.logic.rerouter import Rerouter
 from typing import Dict, List, Any, Optional, Set, Tuple
@@ -23,6 +24,14 @@ LOCATION_MAP: Dict[str, Tuple[int, int]] = {
     "shelf a3": (3, 5),
     "shelf-a": (3, 3),
     "shelf a": (3, 3),
+    "shelf deck a": (3, 3),
+    "shelf deck-a": (3, 3),
+    "shelf deck b": (8, 3),
+    "shelf deck-b": (8, 3),
+    "shelf deck c": (11, 3),
+    "shelf deck-c": (11, 3),
+    "shelf deck d": (14, 3),
+    "shelf deck-d": (14, 3),
     # Shelf B (Access via Aisle 2 at col 8)
     "shelf-b1": (8, 3),
     "shelf b1": (8, 3),
@@ -124,6 +133,14 @@ class WarehouseEnvironment:
             return None
 
         clean_name = name.strip().lower().rstrip(".").rstrip(",")
+
+        # If a full order sentence was passed, extract the source pickup clause first
+        m_from = re.search(r"\bfrom\s+(.*?)(?:\s+to\s+|$)", clean_name)
+        if m_from:
+            extracted_src = m_from.group(1).strip()
+            res = self.resolve_location(extracted_src)
+            if res:
+                return res
 
         if clean_name in LOCATION_MAP:
             return self._ensure_walkable(LOCATION_MAP[clean_name])
@@ -762,6 +779,7 @@ class WarehouseEnvironment:
                 if r.enabled and r.state == RobotState.IDLE and not r.waypoints and r.battery > 20.0
             ]
             if idle_robots:
+                next_order = self.task_queue.pop(0)
                 parsed_dict = next_order.get("parsed_order") or {}
                 source_name = next_order.get("source_name") or parsed_dict.get("source")
                 destination_name = next_order.get("destination_name") or parsed_dict.get("destination")
@@ -770,14 +788,17 @@ class WarehouseEnvironment:
                 qty = next_order.get("qty") or parsed_dict.get("quantity")
                 source_pos = self.resolve_location(source_name)
 
-                # Prioritize nearest idle robot to the source position
+                # Prioritize nearest idle robot to the source position (closest first, higher battery tie-breaker)
                 if source_pos:
                     best_robot = min(
                         idle_robots,
-                        key=lambda r: abs(r.position[0] - source_pos[0]) + abs(r.position[1] - source_pos[1])
+                        key=lambda r: (
+                            abs(r.position[0] - source_pos[0]) + abs(r.position[1] - source_pos[1]),
+                            -float(r.battery)
+                        )
                     )
                 else:
-                    best_robot = idle_robots[0]
+                    best_robot = max(idle_robots, key=lambda r: float(r.battery))
 
                 logger.info(
                     "Auto-dispatching queued order '%s' to nearest idle robot %s at %s",

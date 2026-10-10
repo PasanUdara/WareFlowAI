@@ -5,6 +5,7 @@ and inter-agent event bus communication.
 """
 
 import os
+import re
 import time
 import asyncio
 import logging
@@ -337,25 +338,36 @@ async def dispatch_order(
     # ---------------------------------------------------------------
     fleet = sim_env.get_fleet_telemetry()
 
-    # Pre-resolve pickup source location to prioritize the nearest idle robot
-    source_pos = sim_env.resolve_location(clean_order_text)
+    # Pre-parse order using fast rule-based parser to identify the pickup source location accurately
+    from agents.task_planning.nodes.parse_order import _rule_based_parse_order
+    pre_parsed = _rule_based_parse_order(clean_order_text)
+    pre_source = (pre_parsed.get("source") if pre_parsed else None)
+    if not pre_source:
+        m_from = re.search(r"\bfrom\s+(.*?)(?:\s+to\s+|$)", clean_order_text, re.IGNORECASE)
+        pre_source = m_from.group(1).strip() if m_from else clean_order_text
 
-    # Filter fleet to eligible idle AMRs with healthy battery (> 20%)
-    idle_robots = [
+    source_pos = sim_env.resolve_location(pre_source)
+
+    # Filter fleet to eligible AMRs with healthy battery (> 20%)
+    # Robots in IDLE state or CHARGING state with healthy battery (> 20%) are available
+    available_fleet = [
         r for r in fleet
         if r.get("enabled", True)
-        and str(r.get("state", "")).lower() == "idle"
+        and str(r.get("state", "")).lower() in ("idle", "charging")
         and not r.get("waypoints", [])
         and float(r.get("battery", 100)) > 20.0
     ]
 
-    # Sort idle robots by distance to the source location (nearest robot first)
-    if source_pos and idle_robots:
-        idle_robots.sort(
-            key=lambda r: abs(r["position"][0] - source_pos[0]) + abs(r["position"][1] - source_pos[1])
+    # Sort available robots by distance to the source location (nearest robot first, higher battery tie-breaker)
+    if source_pos and available_fleet:
+        available_fleet.sort(
+            key=lambda r: (
+                abs(r["position"][0] - source_pos[0]) + abs(r["position"][1] - source_pos[1]),
+                -float(r.get("battery", 100))
+            )
         )
 
-    # If any idle robots exist, pass them into task planner; otherwise pass empty list to trigger queuing
+    # If any available robots exist, pass them into task planner; otherwise pass empty list to trigger queuing
     available_robots = [
         {
             "id": r["robot_id"],
@@ -363,7 +375,7 @@ async def dispatch_order(
             "status": r["state"],
             "position": r["position"]
         }
-        for r in idle_robots
+        for r in available_fleet
     ]
 
     # ---------------------------------------------------------------
@@ -391,6 +403,25 @@ async def dispatch_order(
     )
 
     parsed = result_state.get("parsed_order") or {}
+
+    # Final verification: guarantee assigned_id is the closest eligible AMR to the finalized parsed source
+    real_src = parsed.get("source")
+    if real_src:
+        real_src_pos = sim_env.resolve_location(real_src)
+        if real_src_pos and available_fleet:
+            closest_robot = min(
+                available_fleet,
+                key=lambda r: (
+                    abs(r["position"][0] - real_src_pos[0]) + abs(r["position"][1] - real_src_pos[1]),
+                    -float(r.get("battery", 100))
+                )
+            )
+            dist = abs(closest_robot["position"][0] - real_src_pos[0]) + abs(closest_robot["position"][1] - real_src_pos[1])
+            logger.info(
+                "Prioritizing closest robot %s at %s (distance=%d from source '%s' at %s, battery=%.1f%%)",
+                closest_robot["robot_id"], closest_robot["position"], dist, real_src, real_src_pos, closest_robot["battery"]
+            )
+            assigned_id = closest_robot["robot_id"]
 
     # ---------------------------------------------------------------
     # 5. Handle Task Planning failure or Fleet Overflow (Task Queue)

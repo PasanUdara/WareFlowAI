@@ -168,6 +168,7 @@ function App() {
   const [mockMode, setMockMode] = useState(false);
   const [simulationOpen, setSimulationOpen] = useState(false);
   const [simulationInitialFocus, setSimulationInitialFocus] = useState(false);
+  const [simulationInitialOpenOrder, setSimulationInitialOpenOrder] = useState(false);
   // Task Planner State
   const [orderText, setOrderText] = useState(defaultOrder);
   const [plan, setPlan] = useState(null);
@@ -257,6 +258,8 @@ function App() {
                 if (!prev) return prev;
                 const assignedRobot = data.robots.find((r) => r.robot_id === prev.robotId);
                 if (assignedRobot) {
+                  const isFinished = assignedRobot.state === 'IDLE' && (!assignedRobot.waypoints || assignedRobot.waypoints.length === 0) && !assignedRobot.destination;
+                  if (isFinished) return null;
                   if (assignedRobot.loaded || assignedRobot.source_active === false) {
                     return { ...prev, sourceActive: false };
                   }
@@ -268,9 +271,15 @@ function App() {
                 let changed = false;
                 data.robots.forEach((robot) => {
                   const route = next[robot.robot_id];
-                  if (route && (robot.loaded || robot.source_active === false) && route.sourceActive) {
-                    next[robot.robot_id] = { ...route, sourceActive: false };
-                    changed = true;
+                  if (route) {
+                    const isFinished = robot.state === 'IDLE' && (!robot.waypoints || robot.waypoints.length === 0) && !robot.destination;
+                    if (isFinished) {
+                      delete next[robot.robot_id];
+                      changed = true;
+                    } else if ((robot.loaded || robot.source_active === false) && route.sourceActive) {
+                      next[robot.robot_id] = { ...route, sourceActive: false };
+                      changed = true;
+                    }
                   }
                 });
                 return changed ? next : prev;
@@ -447,23 +456,23 @@ function App() {
     setActiveTab('overview');
   };
 
-  const handleDispatchOrder = async (e) => {
-    if (e) e.preventDefault();
-    if (!orderText.trim()) return;
+  const executeDispatchOrder = async (customOrderText) => {
+    const textToDispatch = (typeof customOrderText === 'string' ? customOrderText : orderText).trim();
+    if (!textToDispatch) return;
 
     setPlanning(true);
     setGlobalError('');
     setPlan(null);
 
     try {
-      const result = await dispatchOrder({ order_text: orderText.trim() });
+      const result = await dispatchOrder({ order_text: textToDispatch });
       setPlan(result);
       setDispatchHistory((previous) => [
-        { id: `${Date.now()}`, orderText: orderText.trim(), result, createdAt: new Date().toISOString() },
+        { id: `${Date.now()}`, orderText: textToDispatch, result, createdAt: new Date().toISOString() },
         ...previous
       ]);
       if (result.status === 'queued') {
-        addActivityLog('Gateway', 'ORDER_QUEUED', `Queued (Pos #${result.queue_position}): "${orderText.substring(0, 30)}..."`);
+        addActivityLog('Gateway', 'ORDER_QUEUED', `Queued (Pos #${result.queue_position}): "${textToDispatch.substring(0, 30)}..."`);
         await loadEventHistory();
         setActiveTab('overview');
       } else if (result.assigned_robot_id) {
@@ -484,7 +493,7 @@ function App() {
           destCoords: [resolvedDest.x, resolvedDest.y],
           sourceActive: true,
           item: itemStr,
-          orderText: orderText.trim(),
+          orderText: textToDispatch,
           timestamp: Date.now()
         };
 
@@ -494,16 +503,23 @@ function App() {
           [result.assigned_robot_id]: routeData
         }));
 
-        addActivityLog('Gateway', 'ORDER_DISPATCH', `Dispatched to ${result.assigned_robot_id}: "${orderText.substring(0, 30)}..."`);
+        addActivityLog('Gateway', 'ORDER_DISPATCH', `Dispatched to ${result.assigned_robot_id}: "${textToDispatch.substring(0, 30)}..."`);
         await loadEventHistory();
         // Immediately switch to the Overview Map so operator sees indicators and robot execution!
         setActiveTab('overview');
       }
+      return result;
     } catch (err) {
       setGlobalError(err.message || 'Task Planning agent could not execute request.');
+      throw err;
     } finally {
       setPlanning(false);
     }
+  };
+
+  const handleDispatchOrder = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    return executeDispatchOrder(orderText);
   };
 
   const handleToggleEmergencyStop = async (resume = false) => {
@@ -1023,8 +1039,9 @@ function App() {
               fleet={mapFleet}
               blockedCells={mapBlockedCells}
               selectedRobotId={selectedRobotId}
-              onFullscreen={(focus = false) => {
+              onFullscreen={(focus = false, openOrder = false) => {
                 setSimulationInitialFocus(Boolean(focus));
+                setSimulationInitialOpenOrder(Boolean(openOrder));
                 setSimulationOpen(true);
                 try {
                   if (!document.fullscreenElement) {
@@ -1697,18 +1714,23 @@ function App() {
           blockedCells={mapBlockedCells}
           selectedRobotId={selectedRobotId}
           onSelectRobot={setSelectedRobotId}
-          onClose={() => setSimulationOpen(false)}
+          onClose={() => {
+            setSimulationOpen(false);
+            setSimulationInitialOpenOrder(false);
+          }}
           onInject={handleInjectAnomaly}
           onClear={handleClearObstacles}
           events={activityLogs}
           mockMode={mockMode}
           setMockMode={setMockMode}
           initialMapFocus={simulationInitialFocus}
+          initialOpenOrder={simulationInitialOpenOrder}
           highlightedTargetId={mapTargetHighlight}
           onTargetSelect={setMapTargetHighlight}
           activeOrderRoute={activeOrderRoute}
           activeOrderRoutes={activeOrderRoutes}
           taskQueue={taskQueue}
+          onDispatchOrder={executeDispatchOrder}
         />
       )}
 

@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 import WarehouseMap, { statusMeta, PathReroutingLegend } from './WarehouseMap';
-import { Play, Pause, Activity, Cpu, Maximize2, Zap, LayoutDashboard, X, AlertTriangle, Battery, Construction, RotateCcw, Check } from './icons';
+import { Play, Pause, Activity, Cpu, Maximize2, Zap, LayoutDashboard, X, AlertTriangle, Battery, Construction, RotateCcw, Check, Plus, Package } from './icons';
+import { dispatchOrder } from '../api';
+
+const SIM_PRESETS = [
+  { label: 'Pallet Delivery', text: 'Move 5 pallets from Shelf A2 to Packing Station 3.' },
+  { label: 'Hazmat Transfer', text: 'Transport 1 drum of solvent from Hazmat Aisle 4 to Station 2' },
+  { label: 'Medical Kits', text: 'Fetch 2 medical kits from Shelf A1 to Station 1' },
+  { label: 'Heavy Equipment', text: 'Move 2 heavy motor assemblies (24kg) from Receiving to Shelf B1' }
+];
 
 export default function SimulationView({
   fleet = [],
@@ -14,11 +22,13 @@ export default function SimulationView({
   mockMode,
   setMockMode,
   initialMapFocus = false,
+  initialOpenOrder = false,
   highlightedTargetId = null,
   onTargetSelect = null,
   activeOrderRoute = null,
   activeOrderRoutes = null,
-  taskQueue = []
+  taskQueue = [],
+  onDispatchOrder = null
 }) {
   const selected = fleet.find((robot) => robot.robot_id === selectedRobotId) || fleet[0];
   const [mapFocus, setMapFocus] = useState(initialMapFocus);
@@ -30,7 +40,20 @@ export default function SimulationView({
     Boolean(typeof document !== 'undefined' && document.fullscreenElement)
   );
 
+  // Create Order Popup Modal State
+  const [showOrderModal, setShowOrderModal] = useState(Boolean(initialOpenOrder));
+  const [orderInputText, setOrderInputText] = useState('');
+  const [isDispatching, setIsDispatching] = useState(false);
+  const [dispatchResult, setDispatchResult] = useState(null);
+  const [dispatchError, setDispatchError] = useState('');
+
   const activeDetourRobot = fleet.find((r) => r.is_rerouted || r.detour_path || r.avoiding_obstacle);
+
+  useEffect(() => {
+    if (initialOpenOrder) {
+      setShowOrderModal(true);
+    }
+  }, [initialOpenOrder]);
 
   useEffect(() => {
     const onFsChange = () => {
@@ -71,6 +94,10 @@ export default function SimulationView({
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
+        if (showOrderModal) {
+          setShowOrderModal(false);
+          return;
+        }
         if (mapFocus) {
           if (document.fullscreenElement) {
             document.exitFullscreen().catch(() => {});
@@ -83,7 +110,32 @@ export default function SimulationView({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, mapFocus]);
+  }, [onClose, mapFocus, showOrderModal]);
+
+  const handleModalDispatch = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const trimmed = orderInputText.trim();
+    if (!trimmed) return;
+
+    setIsDispatching(true);
+    setDispatchError('');
+    setDispatchResult(null);
+
+    try {
+      let result;
+      if (onDispatchOrder) {
+        result = await onDispatchOrder(trimmed);
+      } else {
+        result = await dispatchOrder({ order_text: trimmed });
+      }
+      setDispatchResult(result);
+      setOrderInputText('');
+    } catch (err) {
+      setDispatchError(err.message || 'Failed to dispatch order to fleet.');
+    } finally {
+      setIsDispatching(false);
+    }
+  };
 
   const selectedMeta = selected ? statusMeta(selected) : null;
   const selectedBattery = selected ? Math.round(Number(selected.battery ?? 100)) : 100;
@@ -159,6 +211,17 @@ export default function SimulationView({
               </button>
             )}
             <button
+              className="focus-hud-btn order-create-hud-btn"
+              onClick={() => {
+                setShowOrderModal(true);
+                setDispatchError('');
+                setDispatchResult(null);
+              }}
+              title="Create and Dispatch Fleet Order"
+            >
+              <Plus size={12} /> Create Order
+            </button>
+            <button
               className="focus-hud-btn"
               onClick={() => {
                 if (document.fullscreenElement) {
@@ -219,6 +282,17 @@ export default function SimulationView({
           </label>
           <button className="sim-button" onClick={() => setMockMode((v) => !v)}>
             {mockMode ? <><Activity size={13} /> Live Telemetry</> : <><Cpu size={13} /> Mock Demo</>}
+          </button>
+          <button
+            className="sim-button order-btn"
+            onClick={() => {
+              setShowOrderModal(true);
+              setDispatchError('');
+              setDispatchResult(null);
+            }}
+            title="Create and Dispatch Fleet Order"
+          >
+            <Plus size={13} /> Create Order
           </button>
           <button
             className="sim-button focus"
@@ -303,7 +377,20 @@ export default function SimulationView({
         <main className="simulation-stage">
           <div className="stage-caption">
             <span>20 × 15 OPERATIONS FLOOR · FULL DIGITAL TWIN</span>
-            <span>{mapFocus ? 'Map Focus Mode (Click Expand Map to restore panels)' : 'Click any AMR or coordinate to inspect'}</span>
+            <div className="stage-caption-actions">
+              <span>{mapFocus ? 'Map Focus Mode (Click Expand Map to restore panels)' : 'Click any AMR or coordinate to inspect'}</span>
+              <button
+                className="stage-quick-order-btn"
+                onClick={() => {
+                  setShowOrderModal(true);
+                  setDispatchError('');
+                  setDispatchResult(null);
+                }}
+                title="Create Warehouse Order"
+              >
+                <Plus size={11} /> Create Order
+              </button>
+            </div>
           </div>
 
           <div className="fullscreen-map-wrapper">
@@ -469,6 +556,145 @@ export default function SimulationView({
           )}
         </div>
       </footer>
+
+      {/* 4. CREATE ORDER POPUP MODAL (Available in Expanded Map & Fullscreen) */}
+      {showOrderModal && (
+        <div
+          className="sim-order-modal-backdrop"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowOrderModal(false);
+          }}
+        >
+          <div className="sim-order-modal-card" role="dialog" aria-modal="true" aria-labelledby="sim-order-title">
+            <div className="sim-order-modal-header">
+              <div className="sim-order-title-wrap">
+                <div className="sim-order-icon-badge">
+                  <Zap size={16} />
+                </div>
+                <div>
+                  <h3 id="sim-order-title">Create Warehouse Order</h3>
+                  <p>Dispatch natural language instructions to fleet AMRs with real-time digital twin routing.</p>
+                </div>
+              </div>
+              <button
+                className="sim-order-close-btn"
+                onClick={() => setShowOrderModal(false)}
+                title="Close (Esc)"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Quick Preset Chips */}
+            <div className="sim-order-presets">
+              <span className="sim-order-presets-label">QUICK PRESETS:</span>
+              <div className="sim-order-chips">
+                {SIM_PRESETS.map((preset, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className="sim-order-chip"
+                    onClick={() => {
+                      setOrderInputText(preset.text);
+                      setDispatchError('');
+                      setDispatchResult(null);
+                    }}
+                  >
+                    <Package size={11} /> {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Order Textarea Input */}
+            <form onSubmit={handleModalDispatch}>
+              <div className="sim-order-input-wrapper">
+                <label htmlFor="sim-order-textarea" className="visually-hidden">
+                  Order instruction text
+                </label>
+                <textarea
+                  id="sim-order-textarea"
+                  className="sim-order-textarea"
+                  rows={3}
+                  maxLength={500}
+                  autoFocus
+                  value={orderInputText}
+                  onChange={(e) => {
+                    setOrderInputText(e.target.value);
+                    if (dispatchError) setDispatchError('');
+                  }}
+                  placeholder="e.g. Move 5 pallets from Shelf A2 to Packing Station 3, or Fetch medical kit from Shelf A1 to Station 1..."
+                />
+                <div className="sim-order-input-meta">
+                  <span className="sim-order-char-count">{orderInputText.length}/500 chars</span>
+                  {orderInputText && (
+                    <button
+                      type="button"
+                      className="sim-order-clear-btn"
+                      onClick={() => setOrderInputText('')}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Status / Feedback Banner */}
+              {dispatchError && (
+                <div className="sim-order-feedback error">
+                  <AlertTriangle size={14} />
+                  <span>{dispatchError}</span>
+                </div>
+              )}
+
+              {dispatchResult && (
+                <div className="sim-order-feedback success">
+                  <Check size={14} />
+                  <div>
+                    <strong>
+                      {dispatchResult.status === 'queued'
+                        ? `Order queued (Position #${dispatchResult.queue_position})`
+                        : `Assigned to ${dispatchResult.assigned_robot_id || 'AMR'}`}
+                    </strong>
+                    {dispatchResult.parsed_order && (
+                      <small>
+                        {dispatchResult.parsed_order.quantity ? `${dispatchResult.parsed_order.quantity} ` : ''}
+                        {dispatchResult.parsed_order.item || 'Items'} · {dispatchResult.parsed_order.source} → {dispatchResult.parsed_order.destination}
+                      </small>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Actions Footer */}
+              <div className="sim-order-modal-actions">
+                <button
+                  type="button"
+                  className="sim-order-cancel-btn"
+                  onClick={() => setShowOrderModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="sim-order-submit-btn"
+                  disabled={isDispatching || !orderInputText.trim()}
+                >
+                  {isDispatching ? (
+                    <>
+                      <RotateCcw size={13} className="spin" /> Dispatching...
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={13} /> Dispatch Task
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
