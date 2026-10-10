@@ -20,7 +20,12 @@ export default function ControlRoom({
   events = [],
   mockMode,
   setMockMode,
-  summary
+  summary,
+  highlightedTargetId,
+  onTargetSelect,
+  activeOrderRoute = null,
+  activeOrderRoutes = null,
+  taskQueue = []
 }) {
   const [currentTime, setCurrentTime] = useState('');
   const [simMode, setSimMode] = useState('Normal');
@@ -225,6 +230,12 @@ export default function ControlRoom({
             showGrid={true}
             showRoutes={true}
             showReroutePanel={true}
+            highlightedTargetId={highlightedTargetId}
+            onTargetSelect={onTargetSelect}
+            showTargetDropdown={true}
+            activeOrderRoute={activeOrderRoute}
+            activeOrderRoutes={activeOrderRoutes}
+            taskQueue={taskQueue}
           />
 
           {/* BOTTOM MAP LEGEND (Image 2 & 3 Style) */}

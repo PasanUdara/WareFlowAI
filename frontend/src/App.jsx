@@ -19,6 +19,7 @@ import WarehouseMap from './components/WarehouseMap';
 import { MOCK_BLOCKED_CELLS, MOCK_FLEET } from './mockTelemetry';
 import SimulationView from './components/SimulationView';
 import ControlRoom from './components/ControlRoom';
+import { TARGET_GROUPS, ALL_TARGET_AREAS, resolveTargetLocation } from './targetAreas';
 import {
   LayoutDashboard,
   Package,
@@ -53,6 +54,45 @@ const PRESET_ORDERS = [
   { Icon: AlertTriangle, label: 'Hazmat Transfer', text: 'Transport 1 drum of solvent from Hazmat Aisle 4 to Station 2' },
   { Icon: Truck, label: 'Heavy Equipment', text: 'Move 2 heavy motor assemblies (24kg) from Receiving to Shelf B1' },
   { Icon: HelpCircle, label: 'Ambiguous Order', text: 'Bring the blue box from somewhere over there' }
+];
+
+const COMPLIANCE_PRESETS = [
+  {
+    id: 'std_safe',
+    label: 'Standard Pallet (Safe)',
+    type: 'pass',
+    payload_weight: 15.0,
+    speed: 1.2,
+    is_hazmat: false,
+    target_zone: 'Packing Station 1'
+  },
+  {
+    id: 'haz_safe',
+    label: 'Hazmat Transfer (Safe)',
+    type: 'pass',
+    payload_weight: 12.0,
+    speed: 0.7,
+    is_hazmat: true,
+    target_zone: 'Hazmat Bay'
+  },
+  {
+    id: 'haz_fast',
+    label: 'Hazmat Overspeed Violation',
+    type: 'fail',
+    payload_weight: 15.0,
+    speed: 1.4,
+    is_hazmat: true,
+    target_zone: 'Packing Station 2'
+  },
+  {
+    id: 'overweight',
+    label: 'Overweight Payload Violation',
+    type: 'fail',
+    payload_weight: 125.0,
+    speed: 1.0,
+    is_hazmat: false,
+    target_zone: 'Shelf A1'
+  }
 ];
 
 const NAV_GROUPS = [
@@ -134,6 +174,12 @@ function App() {
   const [planning, setPlanning] = useState(false);
   const [dispatchHistory, setDispatchHistory] = useState([]);
 
+  // Target Highlight & Active Order Route State
+  const [mapTargetHighlight, setMapTargetHighlight] = useState('');
+  const [activeOrderRoute, setActiveOrderRoute] = useState(null);
+  const [activeOrderRoutes, setActiveOrderRoutes] = useState({});
+  const [taskQueue, setTaskQueue] = useState([]);
+
   // Add Robot Modal State
   const [showAddModal, setShowAddModal] = useState(false);
   const [newRobot, setNewRobot] = useState({
@@ -202,8 +248,33 @@ function App() {
           if (!isSubscribed) return;
           try {
             const data = JSON.parse(event.data);
+            if (data.task_queue !== undefined) {
+              setTaskQueue(data.task_queue);
+            }
             if (data.robots) {
               setFleet(data.robots);
+              setActiveOrderRoute((prev) => {
+                if (!prev) return prev;
+                const assignedRobot = data.robots.find((r) => r.robot_id === prev.robotId);
+                if (assignedRobot) {
+                  if (assignedRobot.loaded || assignedRobot.source_active === false) {
+                    return { ...prev, sourceActive: false };
+                  }
+                }
+                return prev;
+              });
+              setActiveOrderRoutes((prev) => {
+                const next = { ...prev };
+                let changed = false;
+                data.robots.forEach((robot) => {
+                  const route = next[robot.robot_id];
+                  if (route && (robot.loaded || robot.source_active === false) && route.sourceActive) {
+                    next[robot.robot_id] = { ...route, sourceActive: false };
+                    changed = true;
+                  }
+                });
+                return changed ? next : prev;
+              });
               if (data.emergency_stopped !== undefined) {
                 setEmergencyStop(Boolean(data.emergency_stopped));
               }
@@ -391,11 +462,43 @@ function App() {
         { id: `${Date.now()}`, orderText: orderText.trim(), result, createdAt: new Date().toISOString() },
         ...previous
       ]);
-      if (result.assigned_robot_id) {
+      if (result.status === 'queued') {
+        addActivityLog('Gateway', 'ORDER_QUEUED', `Queued (Pos #${result.queue_position}): "${orderText.substring(0, 30)}..."`);
+        await loadEventHistory();
+        setActiveTab('overview');
+      } else if (result.assigned_robot_id) {
         setSelectedRobotId(result.assigned_robot_id);
+
+        // Automatically activate source and destination indicators on digital twin map
+        const srcName = result.parsed_order?.source || 'Shelf A2';
+        const destName = result.parsed_order?.destination || 'Packing Station 3';
+        const resolvedSrc = resolveTargetLocation(srcName) || { x: 3, y: 4, name: srcName };
+        const resolvedDest = resolveTargetLocation(destName) || { x: 17, y: 12, name: destName };
+        const itemStr = `${result.parsed_order?.quantity ?? ''} ${result.parsed_order?.item ?? ''}`.trim() || 'items';
+
+        const routeData = {
+          robotId: result.assigned_robot_id,
+          sourceName: resolvedSrc.name || srcName,
+          destinationName: resolvedDest.name || destName,
+          sourceCoords: [resolvedSrc.x, resolvedSrc.y],
+          destCoords: [resolvedDest.x, resolvedDest.y],
+          sourceActive: true,
+          item: itemStr,
+          orderText: orderText.trim(),
+          timestamp: Date.now()
+        };
+
+        setActiveOrderRoute(routeData);
+        setActiveOrderRoutes((prev) => ({
+          ...prev,
+          [result.assigned_robot_id]: routeData
+        }));
+
+        addActivityLog('Gateway', 'ORDER_DISPATCH', `Dispatched to ${result.assigned_robot_id}: "${orderText.substring(0, 30)}..."`);
+        await loadEventHistory();
+        // Immediately switch to the Overview Map so operator sees indicators and robot execution!
+        setActiveTab('overview');
       }
-      addActivityLog('Gateway', 'ORDER_DISPATCH', `Dispatched: "${orderText.substring(0, 30)}..."`);
-      await loadEventHistory();
     } catch (err) {
       setGlobalError(err.message || 'Task Planning agent could not execute request.');
     } finally {
@@ -916,7 +1019,24 @@ function App() {
         {/* TAB 1: OVERVIEW & MAP */}
         {activeTab === 'overview' && (
           <div className="tab-view fade-in">
-            <ControlRoom fleet={mapFleet} blockedCells={mapBlockedCells} selectedRobotId={selectedRobotId} onSelectRobot={setSelectedRobotId} onFullscreen={(focus = false) => { setSimulationInitialFocus(Boolean(focus)); setSimulationOpen(true); }} onInject={handleInjectAnomaly} onClear={handleClearObstacles} events={activityLogs} mockMode={mockMode} setMockMode={setMockMode} summary={fleetSummary} />
+            <ControlRoom
+              fleet={mapFleet}
+              blockedCells={mapBlockedCells}
+              selectedRobotId={selectedRobotId}
+              onSelectRobot={setSelectedRobotId}
+              onFullscreen={(focus = false) => { setSimulationInitialFocus(Boolean(focus)); setSimulationOpen(true); }}
+              onInject={handleInjectAnomaly}
+              onClear={handleClearObstacles}
+              events={activityLogs}
+              mockMode={mockMode}
+              setMockMode={setMockMode}
+              summary={fleetSummary}
+              highlightedTargetId={mapTargetHighlight}
+              onTargetSelect={setMapTargetHighlight}
+              activeOrderRoute={activeOrderRoute}
+              activeOrderRoutes={activeOrderRoutes}
+              taskQueue={taskQueue}
+            />
           </div>
         )}
         {/* TAB 2: TASK PLANNER */}
@@ -925,7 +1045,7 @@ function App() {
             <div className="section-title-box">
               <span className="member-tag">Member 1 Agent</span>
               <h2>Create Warehouse Order</h2>
-              <p>Submit a natural-language instruction to the existing planning and dispatch API. The backend response is shown below.</p>
+              <p>Submit a natural-language instruction to the LangGraph planning engine. Source and destination markers are displayed automatically on the Digital Twin floor.</p>
             </div>
 
             <div className="planner-workspace">
@@ -1218,78 +1338,198 @@ function App() {
             <div className="section-title-box">
               <span className="member-tag">Member 3 RAG Agent</span>
               <h2>Knowledge & SOP Compliance Gate</h2>
-              <p>Validates mission metrics against ingested Qdrant vector database rules.</p>
+              <p>Validates mission metrics against ingested Qdrant vector database regulations and safety limits.</p>
             </div>
 
             <div className="dashboard-grid">
+              {/* Left Column: Mission Parameters Form & Verification Result */}
               <div className="card">
+                <div className="card-header">
+                  <div>
+                    <h3>Pre-Flight Mission Parameters</h3>
+                    <p className="subtle-text" style={{ fontSize: '11.5px', marginTop: '2px' }}>
+                      Configure mission values to test deterministic safety boundaries and Qdrant RAG rules.
+                    </p>
+                  </div>
+                  <span className="badge-member">SOP Gate</span>
+                </div>
+
+                {/* Quick Presets Bar */}
+                <div style={{ marginBottom: '14px' }}>
+                  <div style={{ fontSize: '10.5px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px' }}>
+                    Quick Test Scenarios
+                  </div>
+                  <div className="compliance-presets-bar">
+                    {COMPLIANCE_PRESETS.map((p) => {
+                      const isActive =
+                        complianceForm.payload_weight === p.payload_weight &&
+                        complianceForm.speed === p.speed &&
+                        complianceForm.is_hazmat === p.is_hazmat &&
+                        complianceForm.target_zone === p.target_zone;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`compliance-preset-btn ${isActive ? 'active' : ''}`}
+                          onClick={() => {
+                            setComplianceForm({
+                              payload_weight: p.payload_weight,
+                              speed: p.speed,
+                              is_hazmat: p.is_hazmat,
+                              target_zone: p.target_zone
+                            });
+                            setComplianceResult(null);
+                          }}
+                        >
+                          <span className={`preset-dot ${p.type}`} />
+                          {p.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <form onSubmit={handleCheckCompliance} className="compliance-form">
-                  <div className="form-row">
-                    <label>
-                      Payload Weight (kg)
-                      <input
-                        type="number"
-                        min="0"
-                        value={complianceForm.payload_weight}
-                        onChange={(e) => setComplianceForm({ ...complianceForm, payload_weight: Number(e.target.value) })}
-                      />
-                    </label>
-                    <label>
-                      Speed (m/s)
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        value={complianceForm.speed}
-                        onChange={(e) => setComplianceForm({ ...complianceForm, speed: Number(e.target.value) })}
-                      />
-                    </label>
+                  <div className="compliance-form-grid">
+                    {/* Payload Weight */}
+                    <div className="compliance-field">
+                      <div className="compliance-field-label">
+                        <Package size={14} color="#38bdf8" />
+                        Payload Weight
+                      </div>
+                      <div className="compliance-input-wrap">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={complianceForm.payload_weight}
+                          onChange={(e) => setComplianceForm({ ...complianceForm, payload_weight: Number(e.target.value) })}
+                          required
+                        />
+                        <span className="compliance-unit-badge">kg</span>
+                      </div>
+                      <span className="compliance-field-hint">Standard: ≤50kg | Heavy AMR Cap: ≤100kg</span>
+                    </div>
+
+                    {/* Speed */}
+                    <div className="compliance-field">
+                      <div className="compliance-field-label">
+                        <Activity size={14} color="#38bdf8" />
+                        Operating Speed
+                      </div>
+                      <div className="compliance-input-wrap">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0.1"
+                          value={complianceForm.speed}
+                          onChange={(e) => setComplianceForm({ ...complianceForm, speed: Number(e.target.value) })}
+                          required
+                        />
+                        <span className="compliance-unit-badge">m/s</span>
+                      </div>
+                      <span className="compliance-field-hint">Standard aisle: ≤2.0 m/s | Hazmat: ≤0.8 m/s</span>
+                    </div>
                   </div>
 
-                  <label className="input-label">
-                    Target Zone
-                    <input
-                      type="text"
+                  {/* Target Zone */}
+                  <div className="compliance-field">
+                    <div className="compliance-field-label">
+                      <Bot size={14} color="#38bdf8" />
+                      Target Warehouse Zone
+                    </div>
+                    <select
                       value={complianceForm.target_zone}
                       onChange={(e) => setComplianceForm({ ...complianceForm, target_zone: e.target.value })}
-                    />
-                  </label>
+                      className="compliance-select"
+                    >
+                      {TARGET_GROUPS.map((grp) => (
+                        <optgroup key={grp.category} label={grp.category}>
+                          {grp.items.map((it) => (
+                            <option key={it.id} value={it.name}>
+                              {it.name} ({it.x}, {it.y})
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <span className="compliance-field-hint">Monitors destination restrictions and aisle transit regulations</span>
+                  </div>
 
-                  <label className="checkbox-line">
+                  {/* Hazmat Toggle Card */}
+                  <div
+                    className={`hazmat-toggle-card ${complianceForm.is_hazmat ? 'active' : ''}`}
+                    onClick={() => setComplianceForm({ ...complianceForm, is_hazmat: !complianceForm.is_hazmat })}
+                  >
                     <input
                       type="checkbox"
                       checked={complianceForm.is_hazmat}
                       onChange={(e) => setComplianceForm({ ...complianceForm, is_hazmat: e.target.checked })}
+                      onClick={(e) => e.stopPropagation()}
                     />
-                    Hazardous Material Payload
-                  </label>
+                    <div className="hazmat-icon-badge">
+                      <AlertTriangle size={18} />
+                    </div>
+                    <div className="hazmat-info">
+                      <div className="hazmat-title">Hazardous Material Cargo (Hazmat)</div>
+                      <div className="hazmat-desc">
+                        Enforces mandatory speed cap ≤ 0.8 m/s and isolated aisle routing under SOP-HAZ-002.
+                      </div>
+                    </div>
+                  </div>
 
-                  <button type="submit" className="glow-button full-width" disabled={complianceLoading}>{complianceLoading ? 'Checking SOPs…' : 'Verify Operation'}</button>
+                  {/* Submit Button */}
+                  <button type="submit" className="compliance-verify-btn" disabled={complianceLoading}>
+                    <ShieldCheck size={18} />
+                    {complianceLoading ? 'Querying Qdrant Vector DB & SOPs…' : 'Verify Operation Compliance'}
+                  </button>
                 </form>
 
+                {/* Verification Result Card */}
                 {complianceResult && (
-                  <div className={`compliance-result-box ${complianceResult.is_compliant ? 'pass' : 'fail'}`}>
-                    <h4 style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                  <div className={`compliance-result-card ${complianceResult.is_compliant ? 'pass' : 'fail'}`}>
+                    <div className="compliance-result-header">
                       {complianceResult.is_compliant ? (
                         <>
-                          <Check size={18} /> Approved
+                          <Check size={20} color="#10b981" />
+                          <span>APPROVED — COMPLIANT WITH WAREHOUSE SOPS</span>
                         </>
                       ) : (
                         <>
-                          <X size={18} /> Violations Detected
+                          <X size={20} color="#ef4444" />
+                          <span>SAFETY VIOLATIONS DETECTED — DISPATCH BLOCKED</span>
                         </>
                       )}
-                    </h4>
-                    {complianceResult.violations?.map((v, i) => (
-                      <div key={i}>• {v}</div>
-                    ))}
+                    </div>
+
+                    {complianceResult.violations?.length > 0 && (
+                      <div className="compliance-violations-list">
+                        {complianceResult.violations.map((v, i) => (
+                          <div key={i} className="compliance-violation-item">
+                            • {v}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {complianceResult.sop_citations?.length > 0 && (
-                      <div className="sop-evidence">
-                        <strong>SOP evidence returned by retrieval</strong>
-                        {complianceResult.sop_citations.map((citation) => <span key={citation}>{citation}</span>)}
+                      <div className="sop-evidence-section">
+                        <div className="sop-evidence-title">
+                          <ShieldCheck size={14} color="#38bdf8" />
+                          Qdrant RAG Verified Citations
+                        </div>
+                        <div className="sop-citation-chips">
+                          {complianceResult.sop_citations.map((citation) => (
+                            <span key={citation} className="sop-citation-badge">
+                              {citation}
+                            </span>
+                          ))}
+                        </div>
                         {complianceResult.sop_evidence?.map((evidence, index) => (
-                          <details key={`${evidence.sop_id}-${index}`}>
-                            <summary>{evidence.filename || evidence.sop_id || 'Retrieved SOP'} — similarity {typeof evidence.similarity_score === 'number' ? evidence.similarity_score.toFixed(3) : 'not provided'}</summary>
+                          <details key={`${evidence.sop_id || index}-${index}`} className="sop-evidence-detail">
+                            <summary>
+                              {evidence.filename || evidence.sop_id || 'Retrieved SOP'} — similarity {typeof evidence.similarity_score === 'number' ? evidence.similarity_score.toFixed(3) : 'verified'}
+                            </summary>
                             <p>{evidence.content}</p>
                           </details>
                         ))}
@@ -1297,6 +1537,71 @@ function App() {
                     )}
                   </div>
                 )}
+              </div>
+
+              {/* Right Column: Ingested SOP Reference Guidelines & Architecture */}
+              <div className="card compliance-reference-card">
+                <div className="card-header">
+                  <div>
+                    <h3>Active Warehouse Safety Regulations</h3>
+                    <p className="subtle-text" style={{ fontSize: '11.5px', marginTop: '2px' }}>
+                      Standard Operating Procedures ingested into Qdrant & evaluated by Member 3.
+                    </p>
+                  </div>
+                  <span className="system-badge healthy">Active</span>
+                </div>
+
+                <div className="sop-rules-list">
+                  {/* Rule 1 */}
+                  <div className="sop-rule-item">
+                    <div className="sop-rule-head">
+                      <span className="sop-rule-code">SOP-SPD-003</span>
+                      <span className="sop-rule-badge">Velocity & Load</span>
+                    </div>
+                    <div className="sop-rule-title">Speed & Payload Constraints</div>
+                    <p className="sop-rule-desc">
+                      Standard payloads are limited to 50kg. Heavy freight must not exceed 100kg AMR structural capacity. Standard aisle velocity capped at 2.0 m/s.
+                    </p>
+                  </div>
+
+                  {/* Rule 2 */}
+                  <div className="sop-rule-item">
+                    <div className="sop-rule-head">
+                      <span className="sop-rule-code">SOP-HAZ-002</span>
+                      <span className="sop-rule-badge warning">Hazmat Protocol</span>
+                    </div>
+                    <div className="sop-rule-title">Hazardous Materials Transport</div>
+                    <p className="sop-rule-desc">
+                      Hazardous substances (chemicals, flammables) strictly enforce a velocity ceiling of 0.8 m/s to prevent spillage, and require designated containment aisles.
+                    </p>
+                  </div>
+
+                  {/* Rule 3 */}
+                  <div className="sop-rule-item">
+                    <div className="sop-rule-head">
+                      <span className="sop-rule-code">SOP-BAT-001</span>
+                      <span className="sop-rule-badge battery">Power Safety</span>
+                    </div>
+                    <div className="sop-rule-title">AMR Battery Reserve Gate</div>
+                    <p className="sop-rule-desc">
+                      Robots must possess at least 15% charge to accept any newly dispatched order. At ≤ 20%, AMRs enter critical return-to-charger mode.
+                    </p>
+                  </div>
+                </div>
+
+                {/* RAG Architecture Summary */}
+                <div className="rag-architecture-box">
+                  <strong>How the Compliance Gate Works:</strong>
+                  <div style={{ marginTop: '4px' }}>
+                    1. <strong>Deterministic Rules Engine:</strong> Validates numeric boundaries (speed, weight, battery reserves) in microseconds.
+                  </div>
+                  <div style={{ marginTop: '2px' }}>
+                    2. <strong>Qdrant Semantic RAG:</strong> Generates vector embeddings for mission parameters and queries official warehouse SOP documents.
+                  </div>
+                  <div style={{ marginTop: '2px' }}>
+                    3. <strong>Pre-Dispatch Gate:</strong> Blocks non-compliant tasks and displays cited evidence for safety audit logs.
+                  </div>
+                </div>
               </div>
             </div>
             {globalError && <div className="notice error">{globalError}</div>}
@@ -1380,7 +1685,26 @@ function App() {
           </div>
         )}
       </main>
-      {simulationOpen && <SimulationView fleet={mapFleet} blockedCells={mapBlockedCells} selectedRobotId={selectedRobotId} onSelectRobot={setSelectedRobotId} onClose={() => setSimulationOpen(false)} onInject={handleInjectAnomaly} onClear={handleClearObstacles} events={activityLogs} mockMode={mockMode} setMockMode={setMockMode} initialMapFocus={simulationInitialFocus} />}
+      {simulationOpen && (
+        <SimulationView
+          fleet={mapFleet}
+          blockedCells={mapBlockedCells}
+          selectedRobotId={selectedRobotId}
+          onSelectRobot={setSelectedRobotId}
+          onClose={() => setSimulationOpen(false)}
+          onInject={handleInjectAnomaly}
+          onClear={handleClearObstacles}
+          events={activityLogs}
+          mockMode={mockMode}
+          setMockMode={setMockMode}
+          initialMapFocus={simulationInitialFocus}
+          highlightedTargetId={mapTargetHighlight}
+          onTargetSelect={setMapTargetHighlight}
+          activeOrderRoute={activeOrderRoute}
+          activeOrderRoutes={activeOrderRoutes}
+          taskQueue={taskQueue}
+        />
+      )}
 
     </div>
   );

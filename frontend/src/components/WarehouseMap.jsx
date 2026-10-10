@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Zap, AlertTriangle, Package, ArrowRight, Pause, X, ChevronUp, Flag } from './icons';
+import { TARGET_GROUPS, ALL_TARGET_AREAS, getGridCellDetails } from '../targetAreas';
 
 const COLS = 20;
 const ROWS = 15;
@@ -188,8 +189,8 @@ export function RobotSprite({ robot, selected, onSelect }) {
         {/* Directional Chevron if Moving */}
         {isMoving && <span className="direction-chevron"><ChevronUp size={11} strokeWidth={2.5} /></span>}
 
-        {/* 3D Cargo Box if Picking / Carrying */}
-        {isPicking && (
+        {/* 3D Cargo Box if Picking / Carrying / Loaded */}
+        {(isPicking || robot.loaded || (isMoving && robot.source_active === false && robot.destination_name)) && (
           <div className="cargo-box-3d" title="Payload Box">
             <div className="box-face box-top" />
             <div className="box-face box-front">
@@ -208,12 +209,70 @@ export function RobotSprite({ robot, selected, onSelect }) {
       {/* 5. Laser Alignment Beam to Shelf for Picking */}
       {isPicking && <div className="shelf-laser-beam" />}
 
-      {/* 6. Speech Bubble for Rerouting / Exceptions */}
-      {(robot.rerouting_msg || (isStuck && selected)) && (
-        <div className="amr-speech-callout">
-          <span>{robot.rerouting_msg || `Rerouting ${robot.robot_id} via Aisle B`}</span>
-        </div>
-      )}
+      {/* 6. Dynamic Floating Action / Loading Speech Bubble around Robot */}
+      {(() => {
+        const isLoading = isPicking || robot.is_loading || (robot.loading_duration && robot.loading_duration > 0);
+        const hasLoaded = robot.loaded || (isMoving && robot.source_active === false && robot.destination_name);
+        const statusMsg = robot.status_text;
+
+        if (isLoading) {
+          return (
+            <div className="amr-floating-status loading">
+              <span className="loading-spinner-dot" />
+              <span className="status-label">
+                {statusMsg || `Loading ${robot.item || 'items'}...`}
+              </span>
+            </div>
+          );
+        }
+
+        if (hasLoaded && isMoving) {
+          return (
+            <div className="amr-floating-status loaded">
+              <span className="status-icon">📦</span>
+              <span className="status-label">
+                {statusMsg || `Carrying ${robot.item || 'items'} → ${robot.destination_name || 'Station'}`}
+              </span>
+            </div>
+          );
+        }
+
+        if (isCharging) {
+          return (
+            <div className="amr-floating-status charging">
+              <span className="status-icon">⚡</span>
+              <span className="status-label">{statusMsg || `Recharging (${battery}%)...`}</span>
+            </div>
+          );
+        }
+
+        if (statusMsg && (statusMsg.includes('Low Battery') || statusMsg.includes('Charging Bay'))) {
+          return (
+            <div className="amr-floating-status low-battery">
+              <span className="status-icon">⚡</span>
+              <span className="status-label">{statusMsg}</span>
+            </div>
+          );
+        }
+
+        if (statusMsg && isMoving) {
+          return (
+            <div className="amr-floating-status enroute">
+              <span className="status-label">{statusMsg}</span>
+            </div>
+          );
+        }
+
+        if (robot.rerouting_msg || (isStuck && selected)) {
+          return (
+            <div className="amr-speech-callout">
+              <span>{robot.rerouting_msg || `Rerouting ${robot.robot_id} via Aisle B`}</span>
+            </div>
+          );
+        }
+
+        return null;
+      })()}
     </div>
   );
 }
@@ -621,20 +680,45 @@ export default function WarehouseMap({
   onCellSelect,
   showGrid = true,
   showRoutes = true,
-  showReroutePanel = true
+  showReroutePanel = true,
+  highlightedTargetId = null,
+  onTargetSelect = null,
+  showTargetDropdown = true,
+  activeOrderRoute = null,
+  activeOrderRoutes = null,
+  taskQueue = []
 }) {
   const renderedRobots = useInterpolatedRobots(fleet);
   const [hover, setHover] = useState(null);
+  const [selectedTargetId, setSelectedTargetId] = useState(highlightedTargetId || '');
+
+  useEffect(() => {
+    if (highlightedTargetId !== undefined && highlightedTargetId !== null) {
+      setSelectedTargetId(highlightedTargetId);
+    }
+  }, [highlightedTargetId]);
+
+  const activeTarget = useMemo(() => {
+    return ALL_TARGET_AREAS.find((t) => t.id === selectedTargetId) || null;
+  }, [selectedTargetId]);
+
+  const handleTargetChange = (e) => {
+    const val = e.target.value;
+    setSelectedTargetId(val);
+    onTargetSelect?.(val);
+  };
+
   const blocked = useMemo(() => new Set(blockedCells.map((cell) => `${cell[0]}:${cell[1]}`)), [blockedCells]);
 
-  // Filter out static warehouse infrastructure (shelves, docks) so hazard boxes ONLY show for real dynamic obstacles
+  // Filter out static warehouse infrastructure (shelves, docks, restricted zone) so hazard boxes ONLY show for real dynamic obstacles
   const isStaticInfrastructure = (x, y) => {
     const nx = Number(x);
     const ny = Number(y);
-    const isShelf = [4, 5, 8, 9, 12, 13, 16, 17].includes(nx) && ny >= 3 && ny <= 11;
-    const isChargingDock = ny === 0 && nx >= 1 && nx <= 4;
-    const isWorkstation = ny === 14 && nx >= 1 && nx <= 4;
-    return isShelf || isChargingDock || isWorkstation;
+    const isShelf = [4, 5, 8, 9, 12, 13, 16, 17].includes(nx) && ny >= 3 && ny <= 9;
+    const isChargingDock = ny >= 11 && ny <= 14 && nx >= 1 && nx <= 4;
+    const isWorkstation = ny >= 11 && ny <= 14 && nx >= 14 && nx <= 18;
+    const isRestricted = ny >= 11 && ny <= 14 && nx >= 7 && nx <= 12;
+    return isShelf || isChargingDock || isWorkstation || isRestricted;
   };
 
   const dynamicObstacles = useMemo(() => {
@@ -646,8 +730,151 @@ export default function WarehouseMap({
   // Check if any robot has active detour
   const activeDetourRobot = renderedRobots.find((r) => r.is_rerouted || r.detour_path || r.avoiding_obstacle);
 
+  // Compute active Source and Destination indicators across all active AMRs
+  const { sourceIndicators, destinationIndicators } = useMemo(() => {
+    const srcList = [];
+    const dstList = [];
+    const seenSrc = new Set();
+    const seenDst = new Set();
+
+    // 1. Process all active robots in live fleet telemetry
+    renderedRobots.forEach((r) => {
+      const isTasked = ['MOVING', 'PICKING'].includes(String(r.state).toUpperCase());
+      const isSrcActive = r.source_active !== false && !r.loaded;
+      const srcLoc = r.source_location;
+      const accent = ACCENTS[r.robot_id] || ACCENTS.default;
+
+      if (isTasked && isSrcActive && srcLoc && Array.isArray(srcLoc)) {
+        const key = `${r.robot_id}-${srcLoc[0]}-${srcLoc[1]}`;
+        if (!seenSrc.has(key)) {
+          seenSrc.add(key);
+          srcList.push({
+            x: Number(srcLoc[0]),
+            y: Number(srcLoc[1]),
+            name: r.source_name || `Shelf (${srcLoc[0]}, ${srcLoc[1]})`,
+            robotId: r.robot_id,
+            color: accent
+          });
+        }
+      }
+
+      const dstLoc = r.final_destination || r.destination;
+      if (isTasked && dstLoc) {
+        const dx = Array.isArray(dstLoc) ? dstLoc[0] : dstLoc.x;
+        const dy = Array.isArray(dstLoc) ? dstLoc[1] : dstLoc.y;
+        const key = `${r.robot_id}-${dx}-${dy}`;
+        if (!seenDst.has(key)) {
+          seenDst.add(key);
+          dstList.push({
+            x: Number(dx),
+            y: Number(dy),
+            name: r.destination_name || `Station (${dx}, ${dy})`,
+            robotId: r.robot_id,
+            color: accent
+          });
+        }
+      }
+    });
+
+    // 2. Incorporate activeOrderRoutes prop (or single activeOrderRoute fallback)
+    const routesMap = activeOrderRoutes || (activeOrderRoute ? { [activeOrderRoute.robotId || 'R1']: activeOrderRoute } : {});
+    Object.values(routesMap).forEach((route) => {
+      if (!route) return;
+      const rId = route.robotId || 'R1';
+      const accent = ACCENTS[rId] || ACCENTS.default;
+
+      if (route.sourceActive && route.sourceCoords) {
+        const key = `${rId}-${route.sourceCoords[0]}-${route.sourceCoords[1]}`;
+        if (!seenSrc.has(key)) {
+          seenSrc.add(key);
+          srcList.push({
+            x: Number(route.sourceCoords[0]),
+            y: Number(route.sourceCoords[1]),
+            name: route.sourceName || 'Pickup Location',
+            robotId: rId,
+            color: accent
+          });
+        }
+      }
+
+      if (route.destCoords) {
+        const key = `${rId}-${route.destCoords[0]}-${route.destCoords[1]}`;
+        if (!seenDst.has(key)) {
+          seenDst.add(key);
+          dstList.push({
+            x: Number(route.destCoords[0]),
+            y: Number(route.destCoords[1]),
+            name: route.destinationName || 'Destination Location',
+            robotId: rId,
+            color: accent
+          });
+        }
+      }
+    });
+
+    return { sourceIndicators: srcList, destinationIndicators: dstList };
+  }, [renderedRobots, activeOrderRoutes, activeOrderRoute]);
+
   return (
     <div className={`warehouse-digital-twin-container ${showGrid ? 'show-grid-lines' : ''}`}>
+      {/* TARGET AREAS CONTROL TOOLBAR */}
+      {showTargetDropdown && (
+        <div className="map-target-control-bar">
+          <div className="target-select-wrap">
+            <span className="target-select-icon"><Flag size={13} /></span>
+            <label htmlFor="map-target-dropdown" className="target-select-label">Target Area Inspector:</label>
+            <select
+              id="map-target-dropdown"
+              className="map-target-dropdown"
+              value={selectedTargetId}
+              onChange={handleTargetChange}
+              aria-label="Inspect target warehouse areas"
+            >
+              <option value="">-- Select Target Area (Highlight on Map) --</option>
+              {TARGET_GROUPS.map((group) => (
+                <optgroup key={group.category} label={group.category}>
+                  {group.items.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} ({item.x}, {item.y}) — {item.category}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          {selectedTargetId && (
+            <button
+              className="clear-target-btn"
+              onClick={() => {
+                setSelectedTargetId('');
+                onTargetSelect?.('');
+              }}
+              title="Clear highlight"
+            >
+              <X size={12} /> Clear Highlight
+            </button>
+          )}
+          {activeTarget && (
+            <div className="active-target-pill">
+              <span className="pill-dot" />
+              <strong className="pill-name">{activeTarget.name}</strong>
+              <span className="pill-coords">({activeTarget.x}, {activeTarget.y})</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PENDING TASK QUEUE BANNER */}
+      {taskQueue && taskQueue.length > 0 && (
+        <div className="map-task-queue-banner">
+          <span className="queue-pulse-dot" />
+          <span className="queue-badge">TASK QUEUE ({taskQueue.length})</span>
+          <span className="queue-text">
+            All AMRs busy · Queued: <b>{taskQueue[0].order_text || `${taskQueue[0].item} from ${taskQueue[0].source_name}`}</b> (assigns to nearest AMR on completion)
+          </span>
+        </div>
+      )}
+
       {/* HIGH-RES PHOTOREALISTIC WAREHOUSE DIGITAL TWIN FLOOR */}
       <div className="warehouse-canvas" onMouseLeave={() => setHover(null)}>
         {/* Background Image is set via CSS on .warehouse-canvas */}
@@ -655,7 +882,70 @@ export default function WarehouseMap({
         {/* 1. Dynamic SVG Routes Overlay */}
         {showRoutes && <RouteOverlay fleet={renderedRobots} blockedCells={dynamicObstacles} />}
 
-        {/* 2. Dynamic Blocked Hazard Containers - Only on REAL dynamic obstacles (Image 4 Style) */}
+        {/* 2. Source / Pickup Location Indicators (Turns OFF once robot finishes loading items) */}
+        {sourceIndicators.map((src) => (
+          <div
+            key={`src-${src.robotId}-${src.x}-${src.y}`}
+            className="source-beacon-marker"
+            style={{
+              ...cellToPercent(src.x, src.y),
+              '--beacon-accent': src.color || '#f59e0b'
+            }}
+            title={`[${src.robotId}] Source: ${src.name}`}
+          >
+            <span className="source-ring r1" />
+            <span className="source-ring r2" />
+            <div className="source-pin">
+              <Package size={13} />
+            </div>
+            <div className="source-callout">
+              <span className="source-kicker">📦 [{src.robotId}] PICKUP</span>
+              <strong>{src.name}</strong>
+              <small>Grid ({src.x}, {src.y})</small>
+            </div>
+          </div>
+        ))}
+
+        {/* 3. Destination Location Indicators (Stays active until delivery) */}
+        {destinationIndicators.map((dst) => (
+          <div
+            key={`dst-${dst.robotId}-${dst.x}-${dst.y}`}
+            className="destination-beacon-marker"
+            style={{
+              ...cellToPercent(dst.x, dst.y),
+              '--beacon-accent': dst.color || '#00f0ff'
+            }}
+            title={`[${dst.robotId}] Destination: ${dst.name}`}
+          >
+            <span className="destination-ring r1" />
+            <span className="destination-ring r2" />
+            <div className="destination-pin">
+              <Flag size={13} />
+            </div>
+            <div className="destination-callout">
+              <span className="dest-kicker">🏁 [{dst.robotId}] TARGET</span>
+              <strong>{dst.name}</strong>
+              <small>Grid ({dst.x}, {dst.y})</small>
+            </div>
+          </div>
+        ))}
+
+        {/* 4. Target Beacon Highlight (When selected from dropdown) */}
+        {activeTarget && (
+          <div className="target-beacon-marker" style={cellToPercent(activeTarget.x, activeTarget.y)}>
+            <span className="beacon-ring r1" />
+            <span className="beacon-ring r2" />
+            <div className="beacon-pin">
+              <Flag size={12} />
+            </div>
+            <div className="beacon-callout">
+              <strong>🎯 {activeTarget.name}</strong>
+              <small>Grid ({activeTarget.x}, {activeTarget.y})</small>
+            </div>
+          </div>
+        )}
+
+        {/* 3. Dynamic Blocked Hazard Containers */}
         {dynamicObstacles.map((c, idx) => {
           return (
             <div key={idx} className="hazard-obstacle-container" style={cellToPercent(c.x, c.y)}>
@@ -668,15 +958,17 @@ export default function WarehouseMap({
           );
         })}
 
-        {/* 3. Interactive Grid Hover Cells */}
+        {/* 4. Interactive Grid Hover Cells */}
         {Array.from({ length: COLS * ROWS }, (_, index) => {
           const x = index % COLS;
           const y = Math.floor(index / COLS);
           const key = `${x}:${y}`;
+          const isTargetHighlight = activeTarget && activeTarget.x === x && activeTarget.y === y;
+
           return (
             <button
               key={key}
-              className="digital-grid-cell"
+              className={`digital-grid-cell ${isTargetHighlight ? 'is-target-active' : ''}`}
               style={cellToPercent(x, y)}
               onMouseEnter={() => setHover({ x, y })}
               onFocus={() => setHover({ x, y })}
@@ -686,7 +978,7 @@ export default function WarehouseMap({
           );
         })}
 
-        {/* 4. Photorealistic AMR Robot Sprites */}
+        {/* 5. Photorealistic AMR Robot Sprites */}
         {renderedRobots.map((robot) => (
           <RobotSprite
             key={robot.robot_id}
@@ -696,33 +988,50 @@ export default function WarehouseMap({
           />
         ))}
 
-        {/* 5. Interactive Coordinate Tooltip */}
+        {/* 6. Precision Grid Cell & Target Inspector Tooltip */}
+        {hover && (() => {
+          const details = getGridCellDetails(hover.x, hover.y);
+          // Check if any robot is currently traveling or tasked to this coordinate
+          const incomingRobot = fleet.find((r) => {
+            const dest = r.destination || r.final_destination;
+            if (!dest) return false;
+            const dx = Array.isArray(dest) ? dest[0] : dest.x;
+            const dy = Array.isArray(dest) ? dest[1] : dest.y;
+            return Number(dx) === hover.x && Number(dy) === hover.y;
+          });
+          // Check if an AMR is currently positioned here
+          const standingRobot = fleet.find((r) => {
+            const rx = Number(r.x ?? r.position?.[0] ?? -1);
+            const ry = Number(r.y ?? r.position?.[1] ?? -1);
+            return rx === hover.x && ry === hover.y;
+          });
 
-        {/* 6. Interactive Coordinate Tooltip */}
-        {hover && (
-          <div className="grid-cell-tooltip" style={cellToPercent(hover.x, hover.y)}>
-            <strong>({hover.x}, {hover.y})</strong>
-            <small>
-              {hover.y <= 2
-                ? 'Receiving Dock'
-                : hover.y >= 11 && hover.x <= 4
-                ? 'Charging Bay'
-                : hover.y >= 11 && hover.x >= 7 && hover.x <= 12
-                ? 'Restricted Zone'
-                : hover.y >= 11 && hover.x >= 14
-                ? 'Packing Station'
-                : hover.x >= 4 && hover.x <= 5
-                ? 'Aisle A'
-                : hover.x >= 8 && hover.x <= 9
-                ? 'Aisle B'
-                : hover.x >= 12 && hover.x <= 13
-                ? 'Aisle C'
-                : hover.x >= 16 && hover.x <= 17
-                ? 'Aisle D'
-                : 'Transit Aisle'}
-            </small>
-          </div>
-        )}
+          return (
+            <div
+              className={`grid-cell-tooltip ${details.isTarget ? 'is-target' : ''} ${details.isHazard ? 'is-hazard' : ''}`}
+              style={cellToPercent(hover.x, hover.y)}
+            >
+              <div className="tooltip-header-row">
+                <strong className="tooltip-title-text">{details.title}</strong>
+                <span className="tooltip-coord-badge">({hover.x}, {hover.y})</span>
+              </div>
+              <div className="tooltip-category-tag">{details.category}</div>
+              {details.description && <div className="tooltip-desc-text">{details.description}</div>}
+              {incomingRobot && (
+                <div className="tooltip-incoming-alert">
+                  <span className="incoming-icon">🎯</span>
+                  <span>Goal for <strong>{incomingRobot.robot_id}</strong> ({incomingRobot.state})</span>
+                </div>
+              )}
+              {standingRobot && (
+                <div className="tooltip-occupied-alert">
+                  <span className="occupied-icon">🤖</span>
+                  <span><strong>{standingRobot.robot_id}</strong> is here ({standingRobot.battery}% charge)</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

@@ -21,20 +21,30 @@ class WarehouseGrid:
         self._setup_layout()
         
     def _setup_layout(self):
-        """Initializes default warehouse layout."""
-        # Charging docks along top wall
-        for x in range(1, 5):
-            self.charging_stations.add((x, 0))
+        """Initializes warehouse layout matching the digital twin visual canvas."""
+        # Charging docks in Charging Bay (bottom-left green area)
+        charger_y = self.height - 2
+        for x in range(1, min(5, self.width)):
+            self.charging_stations.add((x, charger_y))
             
-        # Workstations along bottom wall
-        for x in range(1, 5):
-            self.dropoff_stations.add((x, self.height - 1))
+        # Workstations in Packing Station area (bottom-right blue area)
+        dropoff_y = self.height - 3
+        dropoff_cols = [15, 16, 17] if self.width >= 18 else [min(self.width - 2, 7)]
+        for x in dropoff_cols:
+            self.dropoff_stations.add((x, dropoff_y))
             
-        # Storage shelves in central columns
-        for y in range(3, self.height - 3):
-            for x in [4, 5, 8, 9, 12, 13, 16, 17]:
+        # Storage shelves in central columns (rows 3 to 9 on standard 20x15)
+        shelf_cols = [4, 5, 8, 9, 12, 13, 16, 17] if self.width >= 18 else [x for x in [4, 5, 8] if x < self.width]
+        for y in range(3, min(10, self.height - 3)):
+            for x in shelf_cols:
                 self.shelves.add((x, y))
                 self.blocked_cells.add((x, y))
+
+        # Restricted Zone (no entry hazard zone: x=7..12, y=11..14 on standard 20x15)
+        if self.width >= 20 and self.height >= 15:
+            for y in range(11, 15):
+                for x in range(7, 13):
+                    self.blocked_cells.add((x, y))
 
     def is_walkable(self, x: int, y: int) -> bool:
         """Check if a coordinate is within bounds and not blocked by static obstacles."""

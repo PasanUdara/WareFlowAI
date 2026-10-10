@@ -13,7 +13,12 @@ export default function SimulationView({
   events = [],
   mockMode,
   setMockMode,
-  initialMapFocus = false
+  initialMapFocus = false,
+  highlightedTargetId = null,
+  onTargetSelect = null,
+  activeOrderRoute = null,
+  activeOrderRoutes = null,
+  taskQueue = []
 }) {
   const selected = fleet.find((robot) => robot.robot_id === selectedRobotId) || fleet[0];
   const [mapFocus, setMapFocus] = useState(initialMapFocus);
@@ -239,6 +244,12 @@ export default function SimulationView({
               showGrid={true}
               showRoutes={true}
               showReroutePanel={false}
+              highlightedTargetId={highlightedTargetId}
+              onTargetSelect={onTargetSelect}
+              showTargetDropdown={true}
+              activeOrderRoute={activeOrderRoute}
+              activeOrderRoutes={activeOrderRoutes}
+              taskQueue={taskQueue}
             />
           </div>
 

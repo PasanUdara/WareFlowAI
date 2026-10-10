@@ -13,26 +13,58 @@ logger = logging.getLogger(__name__)
 
 # Semantic warehouse location name to walkable grid coordinates mapping
 LOCATION_MAP: Dict[str, Tuple[int, int]] = {
+    # Shelf A
     "shelf-a1": (3, 3),
     "shelf a1": (3, 3),
     "shelf-a2": (3, 4),
     "shelf a2": (3, 4),
+    "shelf-a3": (3, 5),
+    "shelf a3": (3, 5),
+    # Shelf B
     "shelf-b1": (6, 3),
     "shelf b1": (6, 3),
     "shelf-b2": (6, 4),
     "shelf b2": (6, 4),
-    "station-1": (1, 14),
-    "station 1": (1, 14),
-    "station-2": (2, 14),
-    "station 2": (2, 14),
-    "packing station 1": (1, 14),
-    "packing station 2": (2, 14),
-    "packing station 3": (3, 14),
-    "packing station-3": (3, 14),
-    "receiving": (1, 1),
-    "receiving dock": (1, 1),
+    "shelf-b3": (6, 5),
+    "shelf b3": (6, 5),
+    # Shelf C
+    "shelf-c1": (10, 3),
+    "shelf c1": (10, 3),
+    "shelf-c2": (10, 4),
+    "shelf c2": (10, 4),
+    # Shelf D
+    "shelf-d1": (14, 3),
+    "shelf d1": (14, 3),
+    "shelf-d2": (14, 4),
+    "shelf d2": (14, 4),
+    # Packing Stations (Workstations at bottom-right)
+    "station-1": (15, 12),
+    "station 1": (15, 12),
+    "station-2": (16, 12),
+    "station 2": (16, 12),
+    "station-3": (17, 12),
+    "station 3": (17, 12),
+    "packing station": (16, 12),
+    "packing station 1": (15, 12),
+    "packing station-1": (15, 12),
+    "packing station 2": (16, 12),
+    "packing station-2": (16, 12),
+    "packing station 3": (17, 12),
+    "packing station-3": (17, 12),
+    # Receiving Dock (Top-left)
+    "receiving": (2, 1),
+    "receiving dock": (2, 1),
+    "receiving-dock": (2, 1),
+    # Charging Bay (Bottom-left)
+    "charging": (2, 13),
+    "charging bay": (2, 13),
+    "charging-bay": (2, 13),
+    "charging station": (2, 13),
+    "charger": (2, 13),
+    # Hazmat Zone
     "hazmat aisle 4": (11, 5),
     "hazmat aisle-4": (11, 5),
+    "hazmat": (11, 5),
 }
 
 
@@ -44,11 +76,22 @@ class WarehouseEnvironment:
         self.robots: Dict[str, Robot] = {}
         self.sensor_generator = SensorEventGenerator()
         self.dynamic_blocked_cells: Set[Tuple[int, int]] = set()
+        self.task_queue: List[Dict[str, Any]] = []
         self._init_fleet(num_robots)
+
+    def queue_order(self, order_dict: Dict[str, Any]) -> int:
+        """Enqueue pending order when all fleet robots are active. Returns 1-based queue position."""
+        self.task_queue.append(order_dict)
+        return len(self.task_queue)
+
+    def get_task_queue(self) -> List[Dict[str, Any]]:
+        """Return snapshot of currently queued orders."""
+        return [dict(t) for t in self.task_queue]
+
         
     def _init_fleet(self, num_robots: int):
         """Spawns AMRs at initial charging stations."""
-        charging_coords = list(self.grid.charging_stations)
+        charging_coords = sorted(list(self.grid.charging_stations))
         for i in range(num_robots):
             robot_id = f"R{i + 1}"
             start_pos = charging_coords[i % len(charging_coords)]
@@ -77,23 +120,37 @@ class WarehouseEnvironment:
             return self._ensure_walkable((3, 3))
         if "shelf" in clean_name and "a2" in clean_name:
             return self._ensure_walkable((3, 4))
+        if "shelf" in clean_name and "a3" in clean_name:
+            return self._ensure_walkable((3, 5))
         if "shelf" in clean_name and "b1" in clean_name:
             return self._ensure_walkable((6, 3))
         if "shelf" in clean_name and "b2" in clean_name:
             return self._ensure_walkable((6, 4))
+        if "shelf" in clean_name and "c1" in clean_name:
+            return self._ensure_walkable((10, 3))
+        if "shelf" in clean_name and "c2" in clean_name:
+            return self._ensure_walkable((10, 4))
+        if "shelf" in clean_name and "d1" in clean_name:
+            return self._ensure_walkable((14, 3))
+        if "shelf" in clean_name and "d2" in clean_name:
+            return self._ensure_walkable((14, 4))
         if "station" in clean_name and "1" in clean_name:
-            return self._ensure_walkable((1, 14))
+            return self._ensure_walkable((15, 12))
         if "station" in clean_name and "2" in clean_name:
-            return self._ensure_walkable((2, 14))
+            return self._ensure_walkable((16, 12))
         if "station" in clean_name and "3" in clean_name:
-            return self._ensure_walkable((3, 14))
+            return self._ensure_walkable((17, 12))
+        if "packing" in clean_name:
+            return self._ensure_walkable((16, 12))
+        if "charging" in clean_name or "charger" in clean_name:
+            return self._ensure_walkable((2, 13))
         if "receiving" in clean_name:
-            return self._ensure_walkable((1, 1))
+            return self._ensure_walkable((2, 1))
         if "hazmat" in clean_name:
             return self._ensure_walkable((11, 5))
 
-        # Default fallback to drop-off station
-        return self._ensure_walkable((1, 14))
+        # Default fallback to drop-off packing station
+        return self._ensure_walkable((16, 12))
 
     def _ensure_walkable(self, coord: Tuple[int, int]) -> Tuple[int, int]:
         """Ensure coordinate is within bounds and not in blocked_cells."""
@@ -111,7 +168,9 @@ class WarehouseEnvironment:
         robot_id: str,
         source_name: Optional[str] = None,
         destination_name: Optional[str] = None,
-        task_description: Optional[str] = None
+        task_description: Optional[str] = None,
+        item: Optional[str] = None,
+        qty: Optional[int] = None
     ) -> List[Tuple[int, int]]:
         """
         Dispatches an order to an AMR by mapping source and destination to grid coordinates
@@ -123,7 +182,7 @@ class WarehouseEnvironment:
             return []
 
         source_pos = self.resolve_location(source_name)
-        dest_pos = self.resolve_location(destination_name) or (1, 14)
+        dest_pos = self.resolve_location(destination_name) or (16, 12)
 
         rerouter = Rerouter()
         grid_bounds = (self.grid.width, self.grid.height)
@@ -177,6 +236,20 @@ class WarehouseEnvironment:
         robot.is_rerouted = False
         robot.stuck_duration = 0.0
         robot.current_task_id = task_description or f"Order: {source_name} to {destination_name}"
+
+        # Initialize source, item and loading tracker
+        robot.source_pos = source_pos
+        robot.source_name = source_name
+        robot.destination_name = destination_name
+        robot.item = item or "pallets"
+        robot.source_active = bool(source_pos and source_pos != robot.position)
+        robot.loaded = False
+        robot.loading_duration = 0.0
+        robot.status_text = (
+            f"Heading to {source_name or 'source'} to collect {robot.item}"
+            if robot.source_active
+            else f"Heading to {destination_name}"
+        )
 
         logger.info(
             "Dispatched robot %s along %d waypoints (Goal: %s via %s)",
@@ -352,7 +425,7 @@ class WarehouseEnvironment:
             if not goal and robot.waypoints:
                 goal = robot.waypoints[-1]
             if not goal:
-                goal = (1, 14)
+                goal = (16, 12)
 
             if goal:
                 path = self.reroute_robot(robot_id, goal)
@@ -375,14 +448,31 @@ class WarehouseEnvironment:
                 key=lambda c: abs(c[0] - robot.position[0]) + abs(c[1] - robot.position[1])
             )
 
+            # If robot had an in-flight mission when battery dropped, re-queue task so another AMR completes it
+            if getattr(robot, "source_name", None) and getattr(robot, "destination_name", None) and not getattr(robot, "requeued_on_low_battery", False):
+                robot.requeued_on_low_battery = True
+                self.task_queue.insert(0, {
+                    "order_id": f"RETRY-{robot.robot_id}",
+                    "order_text": f"Move {robot.item or 'items'} from {robot.source_name} to {robot.destination_name}",
+                    "source_name": robot.source_name,
+                    "destination_name": robot.destination_name,
+                    "item": robot.item or "pallets",
+                    "qty": 1,
+                    "timestamp": time.time()
+                })
+
             if robot.position == charger:
                 robot.state = RobotState.CHARGING
                 robot.destination = charger
                 robot.waypoints = []
                 robot.stuck_duration = 0.0
+                robot.status_text = f"Recharging battery ({int(round(robot.battery))}%)..."
                 action["waypoints"] = []
             else:
                 path = self.reroute_robot(robot_id, charger)
+                robot.source_active = False
+                robot.loaded = False
+                robot.status_text = f"Low Battery ({robot.battery:.0f}%) → Navigating to Charging Bay"
                 action["waypoints"] = path[1:] if len(path) > 1 else path
 
             return action
@@ -517,16 +607,17 @@ class WarehouseEnvironment:
                     and robot.battery < 99.0
                 ):
                     robot.state = RobotState.CHARGING
-                # Check physical anomaly conditions on the active robot
+                    robot.status_text = f"Recharging battery ({int(round(robot.battery))}%)..."
+                # Check physical anomaly conditions on active robot (low battery <= 20.0)
                 if (
-                    robot.battery < 15.0
+                    robot.battery <= 20.0
                     and robot.state != RobotState.CHARGING
                     and (not robot.destination or robot.destination not in self.grid.charging_stations)
                 ):
                     anomalies.append({
                         "event_type": "LOW_BATTERY",
                         "robot_id": robot.robot_id,
-                        "battery": robot.battery,
+                        "battery": round(robot.battery, 1),
                         "position": robot.position,
                         "severity": "CRITICAL"
                     })
@@ -544,4 +635,41 @@ class WarehouseEnvironment:
                     anomaly = self.sensor_generator.maybe_inject_anomaly(robot)
                     if anomaly:
                         anomalies.append(anomaly)
+
+        # Process pending task queue if any idle robots are available
+        if self.task_queue:
+            idle_robots = [
+                r for r in self.robots.values()
+                if r.enabled and r.state == RobotState.IDLE and not r.waypoints and r.battery > 20.0
+            ]
+            if idle_robots:
+                next_order = self.task_queue.pop(0)
+                source_name = next_order.get("source_name")
+                destination_name = next_order.get("destination_name")
+                source_pos = self.resolve_location(source_name)
+
+                # Prioritize nearest idle robot to the source position
+                if source_pos:
+                    best_robot = min(
+                        idle_robots,
+                        key=lambda r: abs(r.position[0] - source_pos[0]) + abs(r.position[1] - source_pos[1])
+                    )
+                else:
+                    best_robot = idle_robots[0]
+
+                logger.info(
+                    "Auto-dispatching queued order '%s' to nearest idle robot %s at %s",
+                    next_order.get("order_text"),
+                    best_robot.robot_id,
+                    best_robot.position
+                )
+                self.dispatch_order_to_robot(
+                    robot_id=best_robot.robot_id,
+                    source_name=source_name,
+                    destination_name=destination_name,
+                    task_description=next_order.get("order_text"),
+                    item=next_order.get("item"),
+                    qty=next_order.get("qty")
+                )
+
         return anomalies

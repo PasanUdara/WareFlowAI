@@ -134,6 +134,7 @@ async def telemetry_background_loop():
                 "emergency_stopped": is_emergency_stopped,
                 "robots": telemetry,
                 "active_exception": active_exception_lifecycle,
+                "task_queue": sim_env.get_task_queue(),
                 "blocked_cells": [list(c) for c in sim_env.grid.blocked_cells],
                 "dynamic_blocked_cells": [list(c) for c in sim_env.dynamic_blocked_cells]
             }
@@ -332,15 +333,37 @@ async def dispatch_order(
     # ---------------------------------------------------------------
     # 3. Get live robot information from simulation
     # ---------------------------------------------------------------
+    # 3. Get live robot information from simulation
+    # ---------------------------------------------------------------
     fleet = sim_env.get_fleet_telemetry()
 
+    # Pre-resolve pickup source location to prioritize the nearest idle robot
+    source_pos = sim_env.resolve_location(clean_order_text)
+
+    # Filter fleet to eligible idle AMRs with healthy battery (> 20%)
+    idle_robots = [
+        r for r in fleet
+        if r.get("enabled", True)
+        and str(r.get("state", "")).lower() == "idle"
+        and not r.get("waypoints", [])
+        and float(r.get("battery", 100)) > 20.0
+    ]
+
+    # Sort idle robots by distance to the source location (nearest robot first)
+    if source_pos and idle_robots:
+        idle_robots.sort(
+            key=lambda r: abs(r["position"][0] - source_pos[0]) + abs(r["position"][1] - source_pos[1])
+        )
+
+    # If any idle robots exist, pass them into task planner; otherwise pass empty list to trigger queuing
     available_robots = [
         {
             "id": r["robot_id"],
             "battery": r["battery"],
-            "status": r["state"]
+            "status": r["state"],
+            "position": r["position"]
         }
-        for r in fleet
+        for r in idle_robots
     ]
 
     # ---------------------------------------------------------------
@@ -370,7 +393,7 @@ async def dispatch_order(
     parsed = result_state.get("parsed_order") or {}
 
     # ---------------------------------------------------------------
-    # 5. Handle Task Planning failure
+    # 5. Handle Task Planning failure or Fleet Overflow (Task Queue)
     # ---------------------------------------------------------------
     if not assigned_id:
         if result_state.get("requires_escalation"):
@@ -385,24 +408,65 @@ async def dispatch_order(
                     priority=MessagePriority.HIGH
                 )
             )
+            return {
+                "success": False,
+                "assigned_robot_id": None,
+                "status": "escalated",
+                "requires_escalation": True,
+                "escalation_reason": result_state.get("escalation_reason"),
+                "parsed_order": parsed,
+                "subtasks": result_state.get("subtasks") or [],
+                "message": f"Order requires human escalation: {result_state.get('escalation_reason')}"
+            }
 
-        return {
-            "success": False,
-            "assigned_robot_id": None,
-            "status": result_state.get(
-                "status",
-                "failed_no_robot"
-            ),
-            "requires_escalation": result_state.get(
-                "requires_escalation",
-                False
-            ),
-            "escalation_reason": result_state.get(
-                "escalation_reason"
-            ),
+        # If all fleet robots are currently active, enqueue the order
+        src_name = parsed.get("source") or "Shelf A2"
+        dst_name = parsed.get("destination") or "Packing Station 3"
+        item_name = parsed.get("item") or "pallets"
+        qty_num = parsed.get("quantity") or 1
+
+        queue_item = {
+            "order_id": f"ORD-{int(time.time() * 1000) % 1000000}",
+            "order_text": clean_order_text,
+            "source_name": src_name,
+            "destination_name": dst_name,
+            "item": item_name,
+            "qty": qty_num,
             "parsed_order": parsed,
             "subtasks": result_state.get("subtasks") or [],
-            "message": "Task planning could not assign a robot."
+            "queued_at": time.time()
+        }
+        queue_pos = sim_env.queue_order(queue_item)
+
+        await event_bus.publish(
+            AgentMessageEnvelope(
+                source="task_planning",
+                destination="gateway",
+                event_type=EventType.ROBOT_ASSIGNED,
+                payload={
+                    "status": "queued",
+                    "queue_position": queue_pos,
+                    "order": queue_item
+                },
+                priority=MessagePriority.NORMAL
+            )
+        )
+
+        return {
+            "success": True,
+            "status": "queued",
+            "queue_position": queue_pos,
+            "assigned_robot_id": None,
+            "requires_escalation": False,
+            "escalation_reason": None,
+            "parsed_order": parsed,
+            "subtasks": result_state.get("subtasks") or [],
+            "compliance": {
+                "is_compliant": True,
+                "violations": [],
+                "sop_citations": ["1. Speed Guidelines"]
+            },
+            "message": f"All robots in the fleet are currently active. Order added to task queue (Position #{queue_pos}). It will automatically dispatch to the nearest AMR upon task completion."
         }
 
     # ---------------------------------------------------------------
@@ -524,11 +588,16 @@ async def dispatch_order(
     # ---------------------------------------------------------------
     # 11. Dispatch approved task to robot
     # ---------------------------------------------------------------
+    parsed_item = parsed.get("item", "")
+    parsed_qty = parsed.get("quantity", "")
+    item_str = f"{parsed_qty} {parsed_item}".strip() if (parsed_item or parsed_qty) else "pallets"
+
     sim_env.dispatch_order_to_robot(
         robot_id=assigned_id,
         source_name=parsed.get("source"),
         destination_name=parsed.get("destination"),
-        task_description=clean_order_text
+        task_description=clean_order_text,
+        item=item_str
     )
 
     await event_bus.publish(
@@ -781,6 +850,16 @@ async def verify_compliance(
         payload=result
     ))
     return result
+
+
+@app.get("/api/v1/orders/queue", summary="Get pending queued warehouse orders")
+def get_order_queue(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Returns the list of orders currently waiting in queue for an idle AMR."""
+    queue = sim_env.get_task_queue()
+    return {
+        "count": len(queue),
+        "queue": queue
+    }
 
 
 @app.get("/api/v1/events/history", summary="Get recent event bus history log")

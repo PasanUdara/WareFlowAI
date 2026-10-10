@@ -41,7 +41,7 @@ def test_dispatch_order_two_stage_route_shelf_to_station():
     """
     env = WarehouseEnvironment(width=20, height=15, num_robots=1)
     robot = env.robots["R1"]
-    robot.position = (1, 0)  # Charging dock
+    robot.position = (1, 13)  # Charging bay
 
     path = env.dispatch_order_to_robot(
         robot_id="R1",
@@ -51,25 +51,25 @@ def test_dispatch_order_two_stage_route_shelf_to_station():
     )
 
     assert path, "Path should not be empty"
-    assert path[0] == (1, 0)
-    assert path[-1] == (1, 14)
+    assert path[0] == (1, 13)
+    assert path[-1] == (15, 12)
     # Shelf-A1 is at (3, 3)
     assert (3, 3) in path, "Shelf-A1 (3, 3) must be visited along the route"
     
     # Verify sequence: Shelf-A1 comes before Station-1
     shelf_index = path.index((3, 3))
-    station_index = path.index((1, 14))
+    station_index = path.index((15, 12))
     assert shelf_index < station_index, "Shelf-A1 must be reached before Station-1"
 
     # Verify robot state
     assert robot.state == RobotState.MOVING
     assert robot.intermediate_target == (3, 3)
-    assert robot.destination == (1, 14)
-    assert robot.final_destination == (1, 14)
+    assert robot.destination == (15, 12)
+    assert robot.final_destination == (15, 12)
 
     # Step simulation until Shelf-A1 is reached
     steps = 0
-    while robot.position != (3, 3) and steps < 20:
+    while robot.position != (3, 3) and steps < 30:
         env.tick(delta_time=0.5)
         steps += 1
 
@@ -77,7 +77,7 @@ def test_dispatch_order_two_stage_route_shelf_to_station():
     # Upon reaching Shelf-A1, intermediate_target should be cleared
     assert robot.intermediate_target is None
     # Robot continues moving to final destination Station-1
-    assert robot.destination == (1, 14)
+    assert robot.destination == (15, 12)
 
 
 def test_inject_anomaly_and_detection():
@@ -127,23 +127,23 @@ def test_reroute_preserves_two_stage_intermediate_target():
     """Verify reroute around an obstacle still visits the intermediate pickup location."""
     env = WarehouseEnvironment(width=20, height=15, num_robots=1)
     robot = env.robots["R1"]
-    robot.position = (1, 0)
+    robot.position = (1, 13)
 
-    # Dispatch route (1, 0) -> (3, 3) -> (1, 14)
+    # Dispatch route (1, 13) -> (3, 3) -> (15, 12)
     env.dispatch_order_to_robot(
         robot_id="R1",
         source_name="Shelf-A1",
         destination_name="Station-1"
     )
 
-    # Block direct path between (1, 0) and (3, 3) at (2, 1)
-    env.grid.blocked_cells.add((2, 1))
+    # Block direct path between (1, 13) and (3, 3) at (1, 10)
+    env.grid.blocked_cells.add((1, 10))
 
     # Trigger reroute
     rerouted_path = env.reroute_robot("R1", goal=robot.destination)
     assert rerouted_path
-    assert not any(p == (2, 1) for p in rerouted_path)
-    # The rerouted path must still visit Shelf-A1 (3, 3) and end at Station-1 (1, 14)
+    assert not any(p == (1, 10) for p in rerouted_path)
+    # The rerouted path must still visit Shelf-A1 (3, 3) and end at Station-1 (15, 12)
     assert (3, 3) in rerouted_path
-    assert rerouted_path[-1] == (1, 14)
-    assert rerouted_path.index((3, 3)) < rerouted_path.index((1, 14))
+    assert rerouted_path[-1] == (15, 12)
+    assert rerouted_path.index((3, 3)) < rerouted_path.index((15, 12))
