@@ -17,6 +17,7 @@ export default function ControlRoom({
   onFullscreen,
   onInject,
   onClear,
+  onRunScenario,
   events = [],
   mockMode,
   setMockMode,
@@ -45,7 +46,6 @@ export default function ControlRoom({
     };
     updateTime();
     const interval = setInterval(updateTime, 1000);
-    return () => clearInterval(interval);
   }, []);
 
   const movingCount = fleet.filter((r) => String(r.state).toUpperCase() === 'MOVING').length;
@@ -57,6 +57,12 @@ export default function ControlRoom({
   const utilization = Math.round((movingCount / totalFleet) * 100);
 
   const activeTasks = fleet.filter((r) => r.current_task).slice(0, 5);
+
+  useEffect(() => {
+    if (stuckRobot) {
+      setShowExceptionBanner(true);
+    }
+  }, [stuckRobot?.robot_id, stuckRobot?.state]);
 
   return (
     <section className="control-room-v2">
@@ -181,7 +187,7 @@ export default function ControlRoom({
           <div className="banner-content">
             <span className="banner-alert-icon"><AlertTriangle size={15} /></span>
             <div className="banner-text">
-              <strong>Exception: {stuckRobot.robot_id} stuck at ({stuckRobot.x ?? 5}, {stuckRobot.y ?? 2})</strong>
+              <strong>Exception: {stuckRobot.robot_id} stuck at ({stuckRobot.x ?? stuckRobot.position?.[0] ?? 5}, {stuckRobot.y ?? stuckRobot.position?.[1] ?? 2})</strong>
               <span>Movement blocked. A* Replanning and SOP compliance evaluation required.</span>
             </div>
           </div>
@@ -207,9 +213,16 @@ export default function ControlRoom({
             <div className="map-actions-row">
               <button
                 className="map-subaction-btn"
-                onClick={() => setMockMode((v) => !v)}
+                onClick={() => {
+                  if (onRunScenario) {
+                    onRunScenario('full_demo');
+                  } else {
+                    setMockMode?.((v) => !v);
+                  }
+                }}
+                title="Run full automated fleet demo scenario (all robots active, obstacle avoidance, battery recharge & task handover)"
               >
-                {mockMode ? <><Activity size={12} /> Live Telemetry</> : <><Cpu size={12} /> Mock Scenarios</>}
+                <Cpu size={12} /> Run Mock Scenarios
               </button>
               <button
                 className="map-subaction-btn fullscreen"
@@ -376,55 +389,81 @@ export default function ControlRoom({
 
             {railTab === 'feed' ? (
               <div className="agent-activity-timeline">
-                {/* 1. Exception Agent */}
-                <div className="timeline-entry exception">
-                  <div className="agent-badge exception-agent">
-                    <span className="agent-icon"><AlertTriangle size={13} /></span>
-                    <strong>Exception Agent</strong>
-                    <time>14:32:17</time>
-                  </div>
-                  <p className="timeline-text">
-                    R3 is stuck at (5, 2). Obstacle detected in aisle. Robot is unable to proceed.
-                  </p>
-                </div>
+                {events && events.length > 0 ? (
+                  events.slice(0, 10).map((ev, idx) => {
+                    const src = ev.source || 'System';
+                    const isEx = src.toLowerCase().includes('exception');
+                    const isPlan = src.toLowerCase().includes('planning') || src.toLowerCase().includes('gateway') || src.toLowerCase().includes('task');
+                    const isComp = src.toLowerCase().includes('compliance') || src.toLowerCase().includes('knowledge');
+                    const badgeClass = isEx ? 'exception-agent' : isPlan ? 'planner-agent' : isComp ? 'compliance-agent' : 'system-agent';
+                    const entryClass = isEx ? 'exception' : isPlan ? 'planner' : isComp ? 'compliance' : 'system';
+                    const icon = isEx ? <AlertTriangle size={13} /> : isPlan ? <Cpu size={13} /> : isComp ? <ClipboardList size={13} /> : <Activity size={13} />;
+                    return (
+                      <div key={idx} className={`timeline-entry ${entryClass}`}>
+                        <div className={`agent-badge ${badgeClass}`}>
+                          <span className="agent-icon">{icon}</span>
+                          <strong>{src}</strong>
+                          <time>{ev.time || 'Live'}</time>
+                        </div>
+                        <p className="timeline-text">
+                          {ev.summary || `${ev.type || 'Event'}`}
+                        </p>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <>
+                    {/* 1. Exception Agent */}
+                    <div className="timeline-entry exception">
+                      <div className="agent-badge exception-agent">
+                        <span className="agent-icon"><AlertTriangle size={13} /></span>
+                        <strong>Exception Agent</strong>
+                        <time>14:32:17</time>
+                      </div>
+                      <p className="timeline-text">
+                        R3 is stuck at (5, 2). Obstacle detected in aisle. Robot is unable to proceed.
+                      </p>
+                    </div>
 
-                {/* 2. Task Planning Agent */}
-                <div className="timeline-entry planner">
-                  <div className="agent-badge planner-agent">
-                    <span className="agent-icon"><Cpu size={13} /></span>
-                    <strong>Task Planning Agent</strong>
-                    <time>14:32:18</time>
-                  </div>
-                  <p className="timeline-text">
-                    Recomputing path for R3 using A* algorithm. Original route blocked. Finding
-                    nearest alternative route via Aisle C.
-                  </p>
-                </div>
+                    {/* 2. Task Planning Agent */}
+                    <div className="timeline-entry planner">
+                      <div className="agent-badge planner-agent">
+                        <span className="agent-icon"><Cpu size={13} /></span>
+                        <strong>Task Planning Agent</strong>
+                        <time>14:32:18</time>
+                      </div>
+                      <p className="timeline-text">
+                        Recomputing path for R3 using A* algorithm. Original route blocked. Finding
+                        nearest alternative route via Aisle C.
+                      </p>
+                    </div>
 
-                {/* 3. Knowledge/Compliance Agent */}
-                <div className="timeline-entry compliance">
-                  <div className="agent-badge compliance-agent">
-                    <span className="agent-icon"><ClipboardList size={13} /></span>
-                    <strong>Knowledge/Compliance Agent</strong>
-                    <time>14:32:19</time>
-                  </div>
-                  <p className="timeline-text">
-                    R3 task paused and reassigned to R4. Updated task queue and notified fleet
-                    manager. Compliance check: safe reroute.
-                  </p>
-                </div>
+                    {/* 3. Knowledge/Compliance Agent */}
+                    <div className="timeline-entry compliance">
+                      <div className="agent-badge compliance-agent">
+                        <span className="agent-icon"><ClipboardList size={13} /></span>
+                        <strong>Knowledge/Compliance Agent</strong>
+                        <time>14:32:19</time>
+                      </div>
+                      <p className="timeline-text">
+                        R3 task paused and reassigned to R4. Updated task queue and notified fleet
+                        manager. Compliance check: safe reroute.
+                      </p>
+                    </div>
 
-                {/* 4. System */}
-                <div className="timeline-entry system">
-                  <div className="agent-badge system-agent">
-                    <span className="agent-icon"><Activity size={13} /></span>
-                    <strong>System</strong>
-                    <time>14:32:20</time>
-                  </div>
-                  <p className="timeline-text">
-                    New path assigned to R4. Estimated arrival time: 3 min.
-                  </p>
-                </div>
+                    {/* 4. System */}
+                    <div className="timeline-entry system">
+                      <div className="agent-badge system-agent">
+                        <span className="agent-icon"><Activity size={13} /></span>
+                        <strong>System</strong>
+                        <time>14:32:20</time>
+                      </div>
+                      <p className="timeline-text">
+                        New path assigned to R4. Estimated arrival time: 3 min.
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <div className="task-queue-table-wrap">
@@ -485,22 +524,42 @@ export default function ControlRoom({
       {/* 4. BOTTOM INTERACTIVE DEMO SCENARIOS BAR */}
       <footer className="control-scenarios-footer">
         <span className="scenarios-title">DEMO SCENARIOS:</span>
-        <button className="scenario-action-btn stuck" onClick={() => onInject('stuck')}>
-          <AlertTriangle size={13} /> Force Robot Stuck
+        <button
+          className="scenario-action-btn"
+          style={{ borderColor: 'rgba(59, 130, 246, 0.4)', color: '#93c5fd' }}
+          onClick={() => onRunScenario ? onRunScenario('all_active') : null}
+          title="Dispatch all 4 fleet robots to active operational missions"
+        >
+          <Activity size={13} /> ⚡ Start All Robots
         </button>
-        <button className="scenario-action-btn battery" onClick={() => onInject('low_battery')}>
-          <Battery size={13} /> Drain Battery (10%)
+        <button
+          className="scenario-action-btn block"
+          onClick={() => onRunScenario ? onRunScenario('block_and_reroute') : onInject?.('block_path', selectedRobotId)}
+          title="Place dynamic obstacle on path, triggering Exception Handling Agent A* detour avoidance"
+        >
+          <Construction size={13} /> 🚧 Dynamic Path Block & Avoid
         </button>
-        <button className="scenario-action-btn block" onClick={() => onInject('block_path')}>
-          <Construction size={13} /> Block Path (Dynamic Obstacle)
+        <button
+          className="scenario-action-btn battery"
+          onClick={() => onRunScenario ? onRunScenario('battery_drain_handover') : onInject?.('low_battery', selectedRobotId)}
+          title="Drain moving robot's battery to 10%, recharge at bay, and hand over task to another AMR"
+        >
+          <Battery size={13} /> 🔋 Drain Battery & Handover
         </button>
-        <button className="scenario-action-btn clear" onClick={onClear}>
-          <RotateCcw size={13} /> Clear All Obstacles
+        <button
+          className="scenario-action-btn stuck"
+          onClick={() => onInject && onInject('stuck', selectedRobotId)}
+          title="Force robot into 12s stall to test exception detection"
+        >
+          <AlertTriangle size={13} /> ⚠️ Force Stall
+        </button>
+        <button className="scenario-action-btn clear" onClick={onClear} title="Clear all dynamic blocked cells">
+          <RotateCcw size={13} /> 🧹 Clear Obstacles
         </button>
         <div className="scenarios-meta">
-          <span>Fleet Size: {fleet.length}</span>
-          <span>Tick Rate: 2 Hz</span>
-          <span>Simulation: Live</span>
+          <span>Fleet: {fleet.length} AMRs</span>
+          <span>Tick: 2 Hz</span>
+          <span>Status: Live</span>
         </div>
       </footer>
     </section>

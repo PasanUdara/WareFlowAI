@@ -13,6 +13,7 @@ import {
   getAuthToken,
   injectRobotAnomaly,
   loginUser,
+  runSimulationScenario,
   triggerEmergencyStop
 } from './api';
 import WarehouseMap from './components/WarehouseMap';
@@ -407,8 +408,8 @@ function App() {
     return { total, moving, charging, available, attention, avgBattery, activeTaskCount, exceptionActive };
   }, [fleet, activeException]);
 
-  const mapFleet = mockMode ? MOCK_FLEET : fleet;
-  const mapBlockedCells = mockMode ? MOCK_BLOCKED_CELLS : blockedCells;
+  const mapFleet = mockMode && (!fleet || fleet.length === 0) ? MOCK_FLEET : (fleet && fleet.length > 0 ? fleet : MOCK_FLEET);
+  const mapBlockedCells = mockMode && (!blockedCells || blockedCells.length === 0) ? MOCK_BLOCKED_CELLS : blockedCells;
 
   const selectedRobot = useMemo(() => {
     return fleet.find((r) => r.robot_id === selectedRobotId) || fleet[0] || null;
@@ -579,13 +580,17 @@ function App() {
     }
   };
 
-  const handleInjectAnomaly = async (anomalyType) => {
-    if (!selectedRobot) return;
+  const handleInjectAnomaly = async (anomalyType, explicitRobotId) => {
+    const targetRobotId = explicitRobotId || selectedRobotId || selectedRobot?.robot_id || (fleet && fleet[0]?.robot_id) || 'R1';
+    if (!targetRobotId) return;
     setAnomalyLoading(true);
     setGlobalError('');
+    if (mockMode) {
+      setMockMode(false);
+    }
     try {
-      await injectRobotAnomaly(selectedRobot.robot_id, anomalyType);
-      addActivityLog('ExceptionAgent', 'ANOMALY_TRIGGERED', `${selectedRobot.robot_id}: ${anomalyType}`);
+      await injectRobotAnomaly(targetRobotId, anomalyType);
+      addActivityLog('ExceptionAgent', 'ANOMALY_TRIGGERED', `${targetRobotId}: ${anomalyType}`);
       await loadFleetData();
       await loadEventHistory();
     } catch (err) {
@@ -603,6 +608,21 @@ function App() {
       await loadFleetData();
     } catch (err) {
       setGlobalError(err.message || 'Failed to clear obstacles');
+    }
+  };
+
+  const handleRunScenario = async (scenarioType = 'full_demo') => {
+    setGlobalError('');
+    if (mockMode) {
+      setMockMode(false);
+    }
+    try {
+      const res = await runSimulationScenario(scenarioType);
+      const msg = res.details?.message || `Triggered scenario: ${scenarioType}`;
+      addActivityLog('Scenarios', 'SCENARIO_RUNNING', msg);
+      await loadFleetData();
+    } catch (err) {
+      setGlobalError(err.message || 'Failed to start scenario');
     }
   };
   const handleCheckCompliance = async (e) => {
@@ -718,6 +738,28 @@ function App() {
               {loginLoading ? 'Authenticating...' : 'Sign In to Command Center →'}
             </button>
           </form>
+
+          <div style={{ marginTop: '0.85rem', textAlign: 'center' }}>
+            <button
+              type="button"
+              className="badge"
+              style={{
+                cursor: 'pointer',
+                background: 'rgba(59, 130, 246, 0.15)',
+                border: '1px solid rgba(59, 130, 246, 0.35)',
+                color: '#93c5fd',
+                padding: '0.4rem 0.8rem',
+                borderRadius: '6px',
+                fontSize: '0.75rem'
+              }}
+              onClick={() => {
+                setLoginUsername('admin');
+                setLoginPassword('admin123');
+              }}
+            >
+              Demo Account: <strong>admin</strong> / <strong>admin123</strong> (Click to fill)
+            </button>
+          </div>
 
           <p className="login-footnote">Sign in with an account configured by your WareFlow administrator.</p>
         </div>
@@ -1039,6 +1081,7 @@ function App() {
               fleet={mapFleet}
               blockedCells={mapBlockedCells}
               selectedRobotId={selectedRobotId}
+              onSelectRobot={setSelectedRobotId}
               onFullscreen={(focus = false, openOrder = false) => {
                 setSimulationInitialFocus(Boolean(focus));
                 setSimulationInitialOpenOrder(Boolean(openOrder));
@@ -1049,7 +1092,9 @@ function App() {
                   }
                 } catch (e) {}
               }}
+              onInject={handleInjectAnomaly}
               onClear={handleClearObstacles}
+              onRunScenario={handleRunScenario}
               events={activityLogs}
               mockMode={mockMode}
               setMockMode={setMockMode}
@@ -1720,6 +1765,7 @@ function App() {
           }}
           onInject={handleInjectAnomaly}
           onClear={handleClearObstacles}
+          onRunScenario={handleRunScenario}
           events={activityLogs}
           mockMode={mockMode}
           setMockMode={setMockMode}

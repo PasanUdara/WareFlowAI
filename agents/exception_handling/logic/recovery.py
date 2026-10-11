@@ -30,20 +30,20 @@ class RecoveryEngine:
                 "notes": "Robot battery is critically low; return to charging station."
             }
 
-        elif anomaly_type == "ROBOT_STUCK":
+        elif anomaly_type in {"ROBOT_STUCK", "PATH_BLOCKED", "OBSTACLE_DETECTED"}:
             return {
                 "action_type": "REROUTE",
                 "robot_id": robot_id,
                 "waypoints": [],
-                "notes": "Robot is stuck; calculate an alternate route around blocked cells."
+                "notes": "Obstacle or stall detected on robot path; calculating alternate A* detour route around blocked cells."
             }
 
-        elif anomaly_type in {"PATH_BLOCKED", "MOTOR_STALL"}:
+        elif anomaly_type in {"MOTOR_STALL"}:
             return {
                 "action_type": "ESCALATE_TO_HUMAN",
                 "robot_id": robot_id,
                 "waypoints": [],
-                "notes": f"Unhandled recovery condition: {anomaly_type}"
+                "notes": f"Hardware alert: {anomaly_type}"
             }
 
         else:

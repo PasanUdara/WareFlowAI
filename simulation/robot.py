@@ -229,6 +229,7 @@ class Robot:
                 self.battery = 100.0
                 self.state = RobotState.IDLE
                 self.status_text = "Idle"
+                self.requeued_on_low_battery = False
         elif self.state == RobotState.STUCK:
             self.stuck_duration += delta_time
 

@@ -476,6 +476,13 @@ class WarehouseEnvironment:
         clean_type = str(anomaly_type).strip().lower()
 
         if clean_type in ("stuck", "robot_stuck"):
+            # If robot is active or has waypoints, place a dynamic obstacle on its upcoming waypoint
+            # so the exception agent's A* reroute visibly navigates around it
+            if robot.waypoints:
+                blocked_coord = robot.waypoints[0]
+                if blocked_coord not in self.grid.charging_stations and blocked_coord != robot.position:
+                    self.grid.blocked_cells.add(blocked_coord)
+                    self.dynamic_blocked_cells.add(blocked_coord)
             robot.state = RobotState.STUCK
             robot.stuck_duration = 12.0  # Above STALL_TIMEOUT_SECONDS = 10.0
             return {
@@ -560,17 +567,16 @@ class WarehouseEnvironment:
             )
             if not goal and robot.waypoints:
                 goal = robot.waypoints[-1]
-            if not goal:
-                goal = (16, 12)
 
             if goal:
                 path = self.reroute_robot(robot_id, goal)
                 action["waypoints"] = path[1:] if len(path) > 1 else path
             else:
-                logger.warning("Reroute requested for %s but no existing goal/destination available.", robot_id)
+                logger.info("Reroute requested for %s with no active mission; clearing stall and returning to standby.", robot_id)
                 if robot.state == RobotState.STUCK:
                     robot.state = RobotState.IDLE
                     robot.stuck_duration = 0.0
+                    robot.status_text = "Idle"
             return action
 
         elif action_type == "RETURN_TO_CHARGER":
@@ -585,17 +591,26 @@ class WarehouseEnvironment:
             )
 
             # If robot had an in-flight mission when battery dropped, re-queue task so another AMR completes it
-            if getattr(robot, "source_name", None) and getattr(robot, "destination_name", None) and not getattr(robot, "requeued_on_low_battery", False):
+            active_mission = getattr(robot, "current_task_id", None) or getattr(robot, "destination_name", None)
+            if active_mission and not getattr(robot, "requeued_on_low_battery", False):
                 robot.requeued_on_low_battery = True
+                src_name = getattr(robot, "source_name", None) or "Shelf B2"
+                dst_name = getattr(robot, "destination_name", None) or "Packing Station 2"
+                item_name = getattr(robot, "item", None) or "pallets"
+                logger.info("Low battery on %s with active mission! Reassigning task to queue for fleet takeover.", robot_id)
                 self.task_queue.insert(0, {
-                    "order_id": f"RETRY-{robot.robot_id}",
-                    "order_text": f"Move {robot.item or 'items'} from {robot.source_name} to {robot.destination_name}",
-                    "source_name": robot.source_name,
-                    "destination_name": robot.destination_name,
-                    "item": robot.item or "pallets",
+                    "order_id": f"HANDOVER-{robot.robot_id}",
+                    "order_text": f"Handover from {robot.robot_id}: Move {item_name} from {src_name} to {dst_name}",
+                    "source_name": src_name,
+                    "destination_name": dst_name,
+                    "item": item_name,
                     "qty": 1,
+                    "handover_from": robot.robot_id,
                     "timestamp": time.time()
                 })
+
+            robot.current_task_id = "Low Battery → Returning to Charger"
+            robot.destination_name = "Charging Bay"
 
             if robot.position == charger:
                 robot.state = RobotState.CHARGING
@@ -608,6 +623,8 @@ class WarehouseEnvironment:
                 path = self.reroute_robot(robot_id, charger)
                 robot.source_active = False
                 robot.loaded = False
+                robot.current_task_id = "Low Battery → Returning to Charger"
+                robot.destination_name = "Charging Bay"
                 robot.status_text = f"Low Battery ({robot.battery:.0f}%) → Navigating to Charging Bay"
                 action["waypoints"] = path[1:] if len(path) > 1 else path
 
@@ -734,6 +751,24 @@ class WarehouseEnvironment:
         anomalies = []
         for robot in self.robots.values():
             if robot.enabled:
+                # 1. Proactive path obstacle collision prevention:
+                # If upcoming waypoint is blocked by dynamic obstacle, stop robot and report PATH_BLOCKED
+                if robot.state == RobotState.MOVING and robot.waypoints:
+                    next_cell = robot.waypoints[0]
+                    if next_cell in self.grid.blocked_cells:
+                        robot.state = RobotState.STUCK
+                        robot.stuck_duration = 12.0
+                        anomalies.append({
+                            "event_type": "PATH_BLOCKED",
+                            "anomaly_type": "PATH_BLOCKED",
+                            "robot_id": robot.robot_id,
+                            "position": robot.position,
+                            "blocked_cell": list(next_cell),
+                            "severity": "HIGH",
+                            "message": f"Obstacle detected on planned path at {next_cell} for {robot.robot_id}."
+                        })
+                        continue
+
                 robot.tick(delta_time)
                 # If robot reached a charging dock and is idle, begin charging
                 if (
@@ -752,6 +787,7 @@ class WarehouseEnvironment:
                 ):
                     anomalies.append({
                         "event_type": "LOW_BATTERY",
+                        "anomaly_type": "LOW_BATTERY",
                         "robot_id": robot.robot_id,
                         "battery": round(robot.battery, 1),
                         "position": robot.position,
@@ -760,6 +796,7 @@ class WarehouseEnvironment:
                 elif robot.state == RobotState.STUCK or robot.stuck_duration > 10.0:
                     anomalies.append({
                         "event_type": "ROBOT_STUCK",
+                        "anomaly_type": "ROBOT_STUCK",
                         "robot_id": robot.robot_id,
                         "position": robot.position,
                         "state": robot.state.value if hasattr(robot.state, "value") else str(robot.state),
@@ -781,11 +818,11 @@ class WarehouseEnvironment:
             if idle_robots:
                 next_order = self.task_queue.pop(0)
                 parsed_dict = next_order.get("parsed_order") or {}
-                source_name = next_order.get("source_name") or parsed_dict.get("source")
-                destination_name = next_order.get("destination_name") or parsed_dict.get("destination")
+                source_name = next_order.get("source_name") or parsed_dict.get("source") or "Shelf A2"
+                destination_name = next_order.get("destination_name") or parsed_dict.get("destination") or "Packing Station 2"
                 sub_orders = next_order.get("sub_orders") or parsed_dict.get("sub_orders")
-                item = next_order.get("item") or parsed_dict.get("item")
-                qty = next_order.get("qty") or parsed_dict.get("quantity")
+                item = next_order.get("item") or parsed_dict.get("item") or "pallets"
+                qty = next_order.get("qty") or parsed_dict.get("quantity") or 1
                 source_pos = self.resolve_location(source_name)
 
                 # Prioritize nearest idle robot to the source position (closest first, higher battery tie-breaker)
@@ -800,9 +837,11 @@ class WarehouseEnvironment:
                 else:
                     best_robot = max(idle_robots, key=lambda r: float(r.battery))
 
+                handover_note = f" (Handover from {next_order.get('handover_from')})" if next_order.get("handover_from") else ""
                 logger.info(
-                    "Auto-dispatching queued order '%s' to nearest idle robot %s at %s",
+                    "Auto-dispatching queued order '%s'%s to nearest idle robot %s at %s",
                     next_order.get("order_text"),
+                    handover_note,
                     best_robot.robot_id,
                     best_robot.position
                 )
@@ -815,5 +854,191 @@ class WarehouseEnvironment:
                     qty=qty,
                     sub_orders=sub_orders
                 )
+                if next_order.get("handover_from"):
+                    best_robot.status_text = f"Taking over {next_order.get('handover_from')}'s task → Heading to {source_name}"
 
         return anomalies
+
+    def run_mock_scenario(self, scenario_type: str = "all_active") -> Dict[str, Any]:
+        """
+        Execute orchestrated live demonstration scenarios:
+        1. 'all_active' / 'start_all': Dispatches tasks to all robots in the fleet.
+        2. 'block_and_reroute': Injects dynamic obstacle ahead of a moving robot; triggers A* detour avoidance.
+        3. 'battery_drain_handover': Drains moving robot's battery; sends to charger; hands over task to another AMR.
+        4. 'full_demo': Dispatches fleet, injects path block on R1, drains R2 with task handover to R4.
+        """
+        stype = (scenario_type or "all_active").strip().lower()
+
+        # Preset realistic warehouse orders
+        preset_orders = [
+            {
+                "robot_id": "R1",
+                "source": "Shelf A2",
+                "destination": "Packing Station 1",
+                "item": "5 Pallets Electronic Components",
+                "qty": 5,
+                "text": "Move 5 pallets from Shelf A2 to Packing Station 1"
+            },
+            {
+                "robot_id": "R2",
+                "source": "Shelf B2",
+                "destination": "Packing Station 2",
+                "item": "3 Cartons Spare Parts",
+                "qty": 3,
+                "text": "Move 3 cartons from Shelf B2 to Packing Station 2"
+            },
+            {
+                "robot_id": "R3",
+                "source": "Hazmat Aisle 4",
+                "destination": "Station 3",
+                "item": "1 Solvent Drum (Hazmat)",
+                "qty": 1,
+                "text": "Transport 1 drum of solvent from Hazmat Aisle 4 to Station 3"
+            },
+            {
+                "robot_id": "R4",
+                "source": "Receiving Dock",
+                "destination": "Shelf D1",
+                "item": "2 Heavy Motor Assemblies (24kg)",
+                "qty": 2,
+                "text": "Move 2 heavy motor assemblies from Receiving to Shelf D1"
+            }
+        ]
+
+        if stype in ("all_active", "start_all", "dispatch_all"):
+            results = []
+            for order in preset_orders:
+                rid = order["robot_id"]
+                if rid in self.robots:
+                    r = self.robots[rid]
+                    r.enabled = True
+                    if r.battery < 50.0:
+                        r.battery = 95.0
+                    self.dispatch_order_to_robot(
+                        robot_id=rid,
+                        source_name=order["source"],
+                        destination_name=order["destination"],
+                        task_description=order["text"],
+                        item=order["item"],
+                        qty=order["qty"]
+                    )
+                    results.append(f"{rid}: {order['text']}")
+            return {
+                "scenario": "all_active",
+                "dispatched_count": len(results),
+                "orders": results,
+                "message": "All 4 fleet robots actively dispatched on warehouse operations."
+            }
+
+        elif stype in ("block_and_reroute", "path_block", "block_path"):
+            moving_robot = next(
+                (r for r in self.robots.values() if r.state == RobotState.MOVING and r.waypoints),
+                None
+            )
+            if not moving_robot:
+                self.dispatch_order_to_robot(
+                    robot_id="R1",
+                    source_name="Shelf A2",
+                    destination_name="Packing Station 1",
+                    task_description="Move 5 pallets from Shelf A2 to Packing Station 1",
+                    item="5 Pallets",
+                    qty=5
+                )
+                moving_robot = self.robots["R1"]
+
+            blocked_coord = moving_robot.waypoints[0] if moving_robot.waypoints else (min(self.grid.width - 1, moving_robot.position[0] + 1), moving_robot.position[1])
+            self.grid.blocked_cells.add(blocked_coord)
+            self.dynamic_blocked_cells.add(blocked_coord)
+            moving_robot.state = RobotState.STUCK
+            moving_robot.stuck_duration = 12.0
+            return {
+                "scenario": "block_and_reroute",
+                "robot_id": moving_robot.robot_id,
+                "blocked_cell": list(blocked_coord),
+                "message": f"Dynamic obstacle placed at {blocked_coord}. Exception Handling Agent will calculate A* detour for {moving_robot.robot_id}."
+            }
+
+        elif stype in ("battery_drain_handover", "battery_handover", "battery"):
+            target_robot = next(
+                (r for r in self.robots.values() if r.state == RobotState.MOVING and r.waypoints),
+                None
+            )
+            if not target_robot:
+                self.dispatch_order_to_robot(
+                    robot_id="R2",
+                    source_name="Shelf B2",
+                    destination_name="Packing Station 2",
+                    task_description="Move 3 cartons from Shelf B2 to Packing Station 2",
+                    item="3 Cartons",
+                    qty=3
+                )
+                target_robot = self.robots["R2"]
+
+            # Ensure R4 is idle ready to take over
+            if "R4" in self.robots and target_robot.robot_id != "R4":
+                r4 = self.robots["R4"]
+                r4.state = RobotState.IDLE
+                r4.waypoints = []
+                r4.battery = 95.0
+                r4.status_text = "Idle (Ready for task handover)"
+
+            target_robot.battery = 10.0
+            return {
+                "scenario": "battery_drain_handover",
+                "robot_id": target_robot.robot_id,
+                "battery": 10.0,
+                "message": f"Robot {target_robot.robot_id} battery drained to 10%. Will navigate to Charging Bay; task will be handed over to available AMR."
+            }
+
+        elif stype in ("full_demo", "all", "mock_scenario_master"):
+            # 1. Dispatch R1, R2, R3
+            self.dispatch_order_to_robot(
+                robot_id="R1",
+                source_name="Shelf A2",
+                destination_name="Packing Station 1",
+                task_description="Move 5 pallets from Shelf A2 to Packing Station 1",
+                item="5 Pallets",
+                qty=5
+            )
+            self.dispatch_order_to_robot(
+                robot_id="R2",
+                source_name="Shelf B2",
+                destination_name="Packing Station 2",
+                task_description="Move 3 cartons from Shelf B2 to Packing Station 2",
+                item="3 Cartons",
+                qty=3
+            )
+            self.dispatch_order_to_robot(
+                robot_id="R3",
+                source_name="Hazmat Aisle 4",
+                destination_name="Station 3",
+                task_description="Transport 1 drum from Hazmat Aisle 4 to Station 3",
+                item="1 Drum",
+                qty=1
+            )
+            # R4 in standby for handover
+            if "R4" in self.robots:
+                self.robots["R4"].state = RobotState.IDLE
+                self.robots["R4"].waypoints = []
+                self.robots["R4"].battery = 98.0
+                self.robots["R4"].status_text = "Fleet Standby / Ready for Task Handover"
+
+            # Dynamic obstacle on R1
+            r1 = self.robots["R1"]
+            if r1.waypoints:
+                blocked_coord = r1.waypoints[min(1, len(r1.waypoints) - 1)]
+                self.grid.blocked_cells.add(blocked_coord)
+                self.dynamic_blocked_cells.add(blocked_coord)
+                r1.state = RobotState.STUCK
+                r1.stuck_duration = 12.0
+
+            # Low battery on R2
+            r2 = self.robots["R2"]
+            r2.battery = 10.0
+
+            return {
+                "scenario": "full_demo",
+                "message": "Full multi-scenario demo started! R1 detouring around dynamic obstacle, R2 low-battery handover to R4, R3 hazmat transfer."
+            }
+        else:
+            raise ValueError(f"Unknown scenario type '{scenario_type}'. Supported: 'all_active', 'block_and_reroute', 'battery_drain_handover', 'full_demo'.")

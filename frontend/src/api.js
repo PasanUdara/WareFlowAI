@@ -169,3 +169,12 @@ export async function fetchActiveException() {
   });
   return handleResponse(response);
 }
+
+export async function runSimulationScenario(scenarioType = 'all_active') {
+  const response = await fetch(`${API_BASE}/api/v1/simulation/scenarios/run`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ scenario_type: scenarioType })
+  });
+  return handleResponse(response);
+}

@@ -18,6 +18,7 @@ export default function SimulationView({
   onClose,
   onInject,
   onClear,
+  onRunScenario = null,
   events = [],
   mockMode,
   setMockMode,
@@ -280,8 +281,12 @@ export default function SimulationView({
               <option value="4x">4x</option>
             </select>
           </label>
-          <button className="sim-button" onClick={() => setMockMode((v) => !v)}>
-            {mockMode ? <><Activity size={13} /> Live Telemetry</> : <><Cpu size={13} /> Mock Demo</>}
+          <button
+            className="sim-button"
+            onClick={() => onRunScenario ? onRunScenario('full_demo') : setMockMode((v) => !v)}
+            title="Run full automated fleet demo scenario"
+          >
+            <Cpu size={13} /> Run Mock Demo
           </button>
           <button
             className="sim-button order-btn"
@@ -421,17 +426,33 @@ export default function SimulationView({
 
           <div className="simulation-scenarios">
             <span className="scenarios-kicker">SCENARIO INJECTION:</span>
-            <button className="sim-scen-btn stuck" onClick={() => onInject('stuck')}>
-              <AlertTriangle size={13} /> Force Stuck Robot
+            <button
+              className="sim-scen-btn"
+              style={{ borderColor: 'rgba(59, 130, 246, 0.4)', color: '#93c5fd' }}
+              onClick={() => onRunScenario ? onRunScenario('all_active') : null}
+              title="Dispatch all 4 fleet robots to active operational missions"
+            >
+              <Activity size={13} /> ⚡ Start All
             </button>
-            <button className="sim-scen-btn battery" onClick={() => onInject('low_battery')}>
-              <Battery size={13} /> Drain Battery (10%)
+            <button
+              className="sim-scen-btn block"
+              onClick={() => onRunScenario ? onRunScenario('block_and_reroute') : onInject?.('block_path', selectedRobotId)}
+              title="Place dynamic obstacle on path, triggering Exception Handling Agent A* detour avoidance"
+            >
+              <Construction size={13} /> 🚧 Avoid Obstacle
             </button>
-            <button className="sim-scen-btn block" onClick={() => onInject('block_path')}>
-              <Construction size={13} /> Place Obstacle on Path
+            <button
+              className="sim-scen-btn battery"
+              onClick={() => onRunScenario ? onRunScenario('battery_drain_handover') : onInject?.('low_battery', selectedRobotId)}
+              title="Drain moving robot battery to 10%, recharge at bay, and hand over task to another AMR"
+            >
+              <Battery size={13} /> 🔋 Battery Handover
+            </button>
+            <button className="sim-scen-btn stuck" onClick={() => onInject && onInject('stuck', selectedRobotId)}>
+              <AlertTriangle size={13} /> ⚠️ Stall
             </button>
             <button className="sim-scen-btn clear" onClick={onClear}>
-              <RotateCcw size={13} /> Clear Obstacles
+              <RotateCcw size={13} /> 🧹 Clear
             </button>
           </div>
         </main>

@@ -15,7 +15,7 @@ try:
     load_dotenv()
 except ImportError:
     pass
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,6 +64,60 @@ active_exception_lifecycle: Dict[str, Any] = {
     "recovery": None,
     "updated_at": time.time()
 }
+active_recovering_robots: Set[str] = set()
+
+
+async def process_anomaly_lifecycle(anomaly: Dict[str, Any]):
+    """Execute staged anomaly recovery lifecycle allowing frontend to visibly reflect each state."""
+    global active_exception_lifecycle
+    robot_id = anomaly.get("robot_id")
+    if not robot_id or robot_id in active_recovering_robots:
+        return
+
+    active_recovering_robots.add(robot_id)
+    try:
+        # Step 1: DETECTED
+        active_exception_lifecycle["status"] = "DETECTED"
+        active_exception_lifecycle["anomaly"] = anomaly
+        active_exception_lifecycle["recovery"] = None
+        active_exception_lifecycle["updated_at"] = time.time()
+
+        await event_bus.publish(AgentMessageEnvelope(
+            source="simulation",
+            destination="exception_handling",
+            event_type=EventType.ANOMALY_DETECTED,
+            payload=anomaly,
+            priority=MessagePriority.HIGH
+        ))
+
+        # Hold for 1.2s to broadcast anomaly state to UI
+        await asyncio.sleep(1.2)
+
+        # Step 2: ANALYZING
+        active_exception_lifecycle["status"] = "ANALYZING"
+        active_exception_lifecycle["updated_at"] = time.time()
+
+        # Hold for 1.0s to simulate agent reasoning & rule lookup
+        await asyncio.sleep(1.0)
+
+        recovery_decision = exception_agent.process_telemetry_event(anomaly)
+        if recovery_decision:
+            # Step 3: RECOVERING
+            active_exception_lifecycle["status"] = "RECOVERING"
+            active_exception_lifecycle["recovery"] = recovery_decision
+            active_exception_lifecycle["updated_at"] = time.time()
+
+            await event_bus.publish(AgentMessageEnvelope(
+                source="exception_handling",
+                destination="simulation",
+                event_type=EventType.RECOVERY_ACTION,
+                payload=recovery_decision,
+                priority=MessagePriority.HIGH
+            ))
+            sim_env.execute_recovery(recovery_decision)
+    except Exception as exc:
+        logger.error("Error in process_anomaly_lifecycle: %s", exc)
+        active_recovering_robots.discard(robot_id)
 
 
 async def telemetry_background_loop():
@@ -76,35 +130,11 @@ async def telemetry_background_loop():
         try:
             if not is_emergency_stopped:
                 anomalies = sim_env.tick(delta_time=interval)
-                # If anomalies occur, feed to exception handling agent, publish events, and execute recovery
+                # If anomalies occur, feed to staged exception handling agent lifecycle
                 for anomaly in anomalies:
-                    active_exception_lifecycle["status"] = "DETECTED"
-                    active_exception_lifecycle["anomaly"] = anomaly
-                    active_exception_lifecycle["updated_at"] = time.time()
-
-                    await event_bus.publish(AgentMessageEnvelope(
-                        source="simulation",
-                        destination="exception_handling",
-                        event_type=EventType.ANOMALY_DETECTED,
-                        payload=anomaly,
-                        priority=MessagePriority.HIGH
-                    ))
-                    
-                    active_exception_lifecycle["status"] = "ANALYZING"
-                    recovery_decision = exception_agent.process_telemetry_event(anomaly)
-                    if recovery_decision:
-                        active_exception_lifecycle["status"] = "RECOVERING"
-                        active_exception_lifecycle["recovery"] = recovery_decision
-                        active_exception_lifecycle["updated_at"] = time.time()
-
-                        await event_bus.publish(AgentMessageEnvelope(
-                            source="exception_handling",
-                            destination="simulation",
-                            event_type=EventType.RECOVERY_ACTION,
-                            payload=recovery_decision,
-                            priority=MessagePriority.HIGH
-                        ))
-                        sim_env.execute_recovery(recovery_decision)
+                    rid = anomaly.get("robot_id")
+                    if rid and rid not in active_recovering_robots:
+                        asyncio.create_task(process_anomaly_lifecycle(anomaly))
 
             # Check if recovering robot has reached its target or entered charging/idle
             if active_exception_lifecycle["status"] == "RECOVERING":
@@ -118,6 +148,13 @@ async def telemetry_background_loop():
                     ):
                         active_exception_lifecycle["status"] = "RESOLVED"
                         active_exception_lifecycle["updated_at"] = time.time()
+                        active_recovering_robots.discard(rec_robot_id)
+            elif active_exception_lifecycle["status"] == "RESOLVED":
+                if time.time() - float(active_exception_lifecycle.get("updated_at", 0)) > 6.0:
+                    active_exception_lifecycle["status"] = "IDLE"
+                    active_exception_lifecycle["anomaly"] = None
+                    active_exception_lifecycle["recovery"] = None
+                    active_exception_lifecycle["updated_at"] = time.time()
             
             telemetry = sim_env.get_fleet_telemetry()
             
@@ -234,6 +271,10 @@ class RobotUpdateRequest(BaseModel):
 
 class AnomalyInjectRequest(BaseModel):
     anomaly_type: str = Field(..., example="stuck", description="Anomaly type: 'stuck', 'low_battery', or 'block_path'")
+
+
+class ScenarioRunRequest(BaseModel):
+    scenario_type: str = Field("all_active", example="all_active", description="Scenario type: 'all_active', 'block_and_reroute', 'battery_drain_handover', or 'full_demo'")
 # --- Endpoints ---
 @app.get("/", summary="Root API info")
 def read_root():
@@ -832,6 +873,7 @@ async def inject_robot_anomaly(
     the condition on the next tick and execute the normal agent recovery pipeline.
     """
     try:
+        active_recovering_robots.discard(robot_id)
         res = sim_env.inject_anomaly(robot_id, req.anomaly_type)
         return {
             "success": True,
@@ -846,7 +888,33 @@ async def inject_robot_anomaly(
 async def clear_dynamic_obstacles(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Reset dynamic obstacles back to default grid layout."""
     sim_env.clear_dynamic_obstacles()
+    active_recovering_robots.clear()
     return {"success": True, "message": "Dynamic obstacles cleared."}
+
+
+@app.post("/api/v1/simulation/scenarios/run", summary="Trigger dynamic simulation demo scenarios")
+async def run_simulation_scenario(
+    req: ScenarioRunRequest = ScenarioRunRequest(),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Trigger orchestrated full-fleet demonstration scenarios.
+    Supports:
+    - 'all_active': Dispatches tasks to all fleet robots simultaneously.
+    - 'block_and_reroute': Injects dynamic path blockage and executes A* detour recovery.
+    - 'battery_drain_handover': Drains battery, returns AMR to charging bay, hands over in-flight task to another AMR.
+    - 'full_demo': End-to-end multi-agent showcase executing all scenarios together.
+    """
+    try:
+        active_recovering_robots.clear()
+        res = sim_env.run_mock_scenario(req.scenario_type)
+        return {
+            "success": True,
+            "scenario": req.scenario_type,
+            "details": res
+        }
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
 
 
 @app.get("/api/v1/simulation/exceptions/active", summary="Get active exception lifecycle state")
