@@ -203,16 +203,26 @@ Create a local `.env` file from the provided template:
   ```bash
   cp .env.example .env
   ```
+
 - **On Windows PowerShell:**
   ```powershell
   Copy-Item .env.example .env
   ```
+
+User accounts are saved in SQLite at `data/wareflow_users.sqlite3` by default, so registrations remain available after restarting the API. Override the location with `WAREFLOW_USERS_DB_PATH` if needed. Passwords are stored as bcrypt hashes, not plaintext. Accounts registered before persistent storage was enabled existed only in memory and must be registered again.
 
 *(Optional)*: If you want to use live LLM parsing, open `.env` and configure your Groq API key:
 ```ini
 GROQ_API_KEY=gsk_your_groq_api_key_here
 GROQ_MODEL_NAME=openai/gpt-oss-120b
 ```
+
+*(Optional)*: To enable Google sign-in, create a **Web application** OAuth client in Google Cloud Console. Add your local origin (for example, `http://localhost:5173`) to its authorized JavaScript origins, then set the same client ID in the root `.env`:
+```ini
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+```
+For running Vite directly from `frontend/`, also create `frontend/.env.local` with `VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com`. Google sign-in verifies the ID token on the API. New users can sign up with Google by providing their name, warehouse name, and acceptance of the Terms of Service and Privacy Policy.
 
 #### 4. Build and Start the Services
 

@@ -60,6 +60,7 @@ frontend/.vite/
 # Vector Store / Local Persistence (exclude runtime data, preserve structure)
 data/vector_store/*
 !data/vector_store/.gitkeep
+data/*.sqlite3*
 
 # Logs & temporary runtimes
 *.log
