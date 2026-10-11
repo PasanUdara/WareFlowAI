@@ -82,6 +82,13 @@ GROQ_API_KEY=gsk_your_groq_api_key_here
 GROQ_MODEL_NAME=openai/gpt-oss-120b
 ```
 
+*(Optional)*: To enable Google sign-in, create a **Web application** OAuth client in Google Cloud Console. Add your local origin (for example, `http://localhost:5173`) to its authorized JavaScript origins, then set the same client ID in the root `.env`:
+```ini
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+```
+For running Vite directly from `frontend/`, also create `frontend/.env.local` with `VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com`. Google sign-in verifies the ID token on the API. New users can sign up with Google by providing their name, warehouse name, and acceptance of the Terms of Service and Privacy Policy.
+
 #### 4. Build and Start the Services
 
 - **Run Full Stack (Frontend + Backend + Qdrant DB):**

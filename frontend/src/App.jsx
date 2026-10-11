@@ -13,9 +13,12 @@ import {
   getAuthToken,
   injectRobotAnomaly,
   loginUser,
+  loginWithGoogle,
   runSimulationScenario,
   triggerEmergencyStop
 } from './api';
+import RegistrationPage from './RegistrationPage';
+import LoginPage from './LoginPage';
 import WarehouseMap from './components/WarehouseMap';
 import { MOCK_BLOCKED_CELLS, MOCK_FLEET } from './mockTelemetry';
 import SimulationView from './components/SimulationView';
@@ -135,11 +138,14 @@ function App() {
   const [userRole, setUserRole] = useState(localStorage.getItem('wareflow_role') || '');
   const [activeTab, setActiveTab] = useState('overview');
 
-  // Login Form State
-  const [loginUsername, setLoginUsername] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
+  // Login & Registration Form State
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleError, setGoogleError] = useState('');
+  const [authPage, setAuthPage] = useState('login');
+  const [googleCredential, setGoogleCredential] = useState('');
+  const [googleProfile, setGoogleProfile] = useState({ email: '', full_name: '' });
 
   // Dashboard Data State
   const [fleet, setFleet] = useState([]);
@@ -420,8 +426,8 @@ function App() {
   // ---------------------------------------------------------------------------
   const handleLogin = async (e, customUser, customPass) => {
     if (e) e.preventDefault();
-    const userToLogin = customUser || loginUsername;
-    const passToLogin = customPass || loginPassword;
+    const userToLogin = customUser || e?.currentTarget?.elements?.username?.value || '';
+    const passToLogin = customPass || e?.currentTarget?.elements?.password?.value || '';
 
     if (!userToLogin.trim() || !passToLogin.trim()) {
       setLoginError('Please provide both username and password.');
@@ -431,11 +437,10 @@ function App() {
     setLoginError('');
 
     try {
-      const data = await loginUser(userToLogin.trim(), passToLogin.trim());
+      const data = await loginUser(userToLogin.trim(), passToLogin);
       setIsAuthenticated(true);
       setCurrentUser(data.username);
       setUserRole(data.role || '');
-      setLoginPassword('');
       localStorage.setItem('wareflow_user', data.username);
       if (data.role) localStorage.setItem('wareflow_role', data.role);
       setGlobalError('');
@@ -446,12 +451,49 @@ function App() {
     }
   };
 
+  const handleGoogleLogin = async (credential, registration) => {
+    setGoogleError('');
+    setLoginError('');
+    setGoogleLoading(true);
+    try {
+      const data = await loginWithGoogle(credential, registration);
+      if (data.requires_registration) {
+        setGoogleCredential(credential);
+        setGoogleProfile({
+          email: data.email,
+          full_name: data.full_name || ''
+        });
+        setAuthPage('google-register');
+        return;
+      }
+      setIsAuthenticated(true);
+      setCurrentUser(data.username);
+      setUserRole(data.role || '');
+      localStorage.setItem('wareflow_user', data.username);
+      if (data.role) localStorage.setItem('wareflow_role', data.role);
+      setGlobalError('');
+    } catch (err) {
+      if (registration) throw err;
+      setGoogleError(err.message || 'Google sign-in failed. Please try again.');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleRegistrationComplete = (data) => {
+    setIsAuthenticated(true);
+    setCurrentUser(data.username);
+    setUserRole(data.role || '');
+    localStorage.setItem('wareflow_user', data.username);
+    if (data.role) localStorage.setItem('wareflow_role', data.role);
+    setGlobalError('');
+  };
+
   const handleLogout = () => {
     clearAuthToken();
     localStorage.removeItem('wareflow_user');
     localStorage.removeItem('wareflow_role');
     setIsAuthenticated(false);
-    setLoginPassword('');
     setCurrentUser('');
     setUserRole('');
     setActiveTab('overview');
@@ -694,76 +736,33 @@ function App() {
   // 1. LOGIN SCREEN (Unauthenticated View)
   // ---------------------------------------------------------------------------
   if (!isAuthenticated) {
+    if (authPage === 'register' || authPage === 'google-register') {
+      return (
+        <RegistrationPage
+          onBackToLogin={() => {
+            setGoogleCredential('');
+            setGoogleProfile({ email: '', full_name: '' });
+            setGoogleError('');
+            setAuthPage('login');
+          }}
+          onRegistered={handleRegistrationComplete}
+          googleCredential={authPage === 'google-register' ? googleCredential : ''}
+          googleProfile={googleProfile}
+          onGoogleRegister={handleGoogleLogin}
+        />
+      );
+    }
+
     return (
-      <div className="login-screen">
-        <div className="login-card card">
-          <div className="login-brand">
-            <div className="brand-mark">WF</div>
-            <h2>WareFlow AI</h2>
-            <p>Warehouse Operations Control Center</p>
-          </div>
-
-          {loginError && (
-            <div className="notice error">
-              {loginError}
-            </div>
-          )}
-
-          <form onSubmit={handleLogin} className="login-form">
-            <label>
-              Username
-              <input
-                type="text"
-                value={loginUsername}
-                onChange={(e) => setLoginUsername(e.target.value)}
-                placeholder="Enter your username"
-                required
-                autoComplete="username"
-              />
-            </label>
-
-            <label>
-              Password
-              <input
-                type="password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="Enter your password"
-                required
-                autoComplete="current-password"
-              />
-            </label>
-
-            <button type="submit" className="glow-button full-width" disabled={loginLoading}>
-              {loginLoading ? 'Authenticating...' : 'Sign In to Command Center →'}
-            </button>
-          </form>
-
-          <div style={{ marginTop: '0.85rem', textAlign: 'center' }}>
-            <button
-              type="button"
-              className="badge"
-              style={{
-                cursor: 'pointer',
-                background: 'rgba(59, 130, 246, 0.15)',
-                border: '1px solid rgba(59, 130, 246, 0.35)',
-                color: '#93c5fd',
-                padding: '0.4rem 0.8rem',
-                borderRadius: '6px',
-                fontSize: '0.75rem'
-              }}
-              onClick={() => {
-                setLoginUsername('admin');
-                setLoginPassword('admin123');
-              }}
-            >
-              Demo Account: <strong>admin</strong> / <strong>admin123</strong> (Click to fill)
-            </button>
-          </div>
-
-          <p className="login-footnote">Sign in with an account configured by your WareFlow administrator.</p>
-        </div>
-      </div>
+      <LoginPage
+        loginError={loginError}
+        loginLoading={loginLoading}
+        googleError={googleError}
+        googleLoading={googleLoading}
+        onLogin={handleLogin}
+        onGoogleCredential={handleGoogleLogin}
+        onOpenRegistration={() => setAuthPage('register')}
+      />
     );
   }
 

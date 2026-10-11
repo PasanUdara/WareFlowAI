@@ -3797,4 +3797,434 @@ body,
   to { transform: rotate(360deg); }
 }
 
+.login-register-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+  color: #cbd5e1;
+  font-size: 12px;
+}
 
+.login-register-cta button,
+.registration-back-link,
+.registration-signin-prompt button {
+  border: 0;
+  background: transparent;
+  color: #7cb1ff;
+  font-weight: 700;
+}
+
+.login-register-cta button:hover,
+.registration-back-link:hover,
+.registration-signin-prompt button:hover {
+  color: #a8ccff;
+  text-decoration: underline;
+}
+
+.registration-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 36px 24px;
+  background:
+    radial-gradient(ellipse at 8% 10%, rgba(44, 105, 220, 0.2), transparent 35%),
+    #0b1220;
+  color: #172033;
+}
+
+.registration-panel {
+  width: min(1100px, 100%);
+  min-height: 680px;
+  display: grid;
+  grid-template-columns: 0.86fr 1.14fr;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.36);
+}
+
+.registration-aside {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 34px;
+  background:
+    radial-gradient(circle at 85% 75%, rgba(47, 111, 237, 0.25), transparent 35%),
+    linear-gradient(150deg, #111c30, #0b1220 75%);
+  color: #e8eef8;
+}
+
+.registration-brand,
+.registration-mobile-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+.registration-brand {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.registration-brand strong,
+.registration-mobile-brand strong {
+  color: #7cb1ff;
+}
+
+.registration-brand-mark {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(147, 197, 253, 0.3);
+  border-radius: 11px;
+  background: linear-gradient(145deg, #3679f6, #2454b4);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.28);
+}
+
+.registration-aside-copy {
+  max-width: 350px;
+  margin: auto 0;
+  padding: 52px 0;
+}
+
+.registration-eyebrow {
+  color: #4c83e7;
+  font: 700 10px 'DM Mono', monospace;
+  letter-spacing: 1.25px;
+}
+
+.registration-aside .registration-eyebrow {
+  color: #8bb6ff;
+}
+
+.registration-aside-copy h1 {
+  margin: 15px 0 14px;
+  color: #f8fafc;
+  font-size: clamp(30px, 3.2vw, 43px);
+  letter-spacing: -1.6px;
+  line-height: 1.12;
+}
+
+.registration-aside-copy p {
+  max-width: 330px;
+  margin: 0;
+  color: #aab8cc;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.registration-aside-foot {
+  padding-top: 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  color: #8696ad;
+  font-size: 11px;
+}
+
+.registration-content {
+  width: min(100%, 590px);
+  align-self: center;
+  justify-self: center;
+  padding: 38px 54px;
+}
+
+.registration-mobile-brand {
+  display: none;
+  margin-bottom: 30px;
+  color: #172033;
+}
+
+.registration-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 30px;
+  padding: 0;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.registration-back-link:hover {
+  color: #2f6fed;
+}
+
+.registration-heading {
+  margin-bottom: 22px;
+}
+
+.registration-heading h2 {
+  margin: 8px 0 5px;
+  color: #172033;
+  font-size: 26px;
+  letter-spacing: -0.8px;
+}
+
+.registration-heading p {
+  margin: 0;
+  color: #718198;
+  font-size: 12px;
+}
+
+.registration-error {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid #f2c7c7;
+  border-radius: 8px;
+  background: #fff5f5;
+  color: #ad3434;
+  font-size: 11px;
+}
+
+.registration-form {
+  display: grid;
+  gap: 14px;
+}
+
+.registration-form > label,
+.registration-password-grid label {
+  display: grid;
+  gap: 6px;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.registration-form input:not([type='checkbox']) {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid #d7dfeb;
+  border-radius: 8px;
+  outline: none;
+  background: #fbfcfe;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 500;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.registration-form input:not([type='checkbox'])::placeholder {
+  color: #9aa7b8;
+}
+
+.registration-form input:not([type='checkbox']):focus {
+  border-color: #5b8ff1;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.12);
+}
+
+.registration-password-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.registration-hint {
+  color: #8491a3;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.registration-password-hint {
+  margin: -9px 0 0;
+}
+
+.registration-form .registration-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 1px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.registration-consent input {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  margin: 1px 0 0;
+  accent-color: #2f6fed;
+}
+
+.registration-consent strong {
+  color: #344258;
+}
+
+.registration-submit {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 3px;
+  border: 1px solid #2f6fed;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #3479f6, #245fd5);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 6px 15px rgba(47, 111, 237, 0.2);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.registration-submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 9px 20px rgba(47, 111, 237, 0.28);
+}
+
+.registration-submit:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.registration-signin-prompt {
+  margin: 22px 0 0;
+  color: #718198;
+  font-size: 11px;
+  text-align: center;
+}
+
+.registration-signin-prompt button {
+  padding: 0;
+  color: #2f6fed;
+  font-size: inherit;
+}
+
+.login-content {
+  max-width: 520px;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 16px;
+  color: #94a0b1;
+  font: 9px 'DM Mono', monospace;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
+}
+
+.login-divider::before,
+.login-divider::after {
+  height: 1px;
+  flex: 1;
+  content: '';
+  background: #e5eaf1;
+}
+
+.google-signin-slot {
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+.google-signin-slot > div {
+  max-width: 100%;
+}
+
+.google-signin-slot.is-loading > div {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.google-loading-label {
+  position: absolute;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #52637b;
+  font-size: 10px;
+}
+
+.google-signin-unconfigured {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid #d7dfeb;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #59677b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.google-signin-unconfigured:disabled {
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.google-setup-hint {
+  margin: 8px 0 0;
+  color: #8a96a7;
+  font-size: 10px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .registration-screen {
+    display: block;
+    padding: 0;
+    background: #fff;
+  }
+
+  .registration-panel {
+    width: 100%;
+    min-height: 100vh;
+    display: block;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .registration-aside {
+    display: none;
+  }
+
+  .registration-content {
+    width: min(100%, 560px);
+    padding: 28px 24px 36px;
+  }
+
+  .registration-mobile-brand {
+    display: inline-flex;
+  }
+
+  .registration-back-link {
+    margin-bottom: 24px;
+  }
+}
+
+@media (max-width: 460px) {
+  .registration-content {
+    padding-inline: 20px;
+  }
+
+  .registration-password-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}

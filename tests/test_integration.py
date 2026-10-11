@@ -5,6 +5,7 @@ telemetry normalization, and compliance event triggers via TestClient.
 """
 
 import pytest
+import time
 from fastapi.testclient import TestClient
 from main import app, sim_env
 from communication import get_event_bus, EventType
@@ -24,13 +25,27 @@ def test_health_check_endpoint():
 
 
 def test_auth_token_issuance():
-    """Verify POST /api/v1/auth/login generates valid JWT access token for demo users."""
-    response = client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin123"})
+    """Verify POST /api/v1/auth/login generates a JWT for a registered user."""
+    email = f"integration_{int(time.time())}@wareflow.ai"
+    registration = client.post("/api/v1/auth/register", json={
+        "password": "StrongPass123",
+        "confirm_password": "StrongPass123",
+        "email": email,
+        "full_name": "Integration Test User",
+        "company_name": "Integration Test Warehouse",
+        "terms_accepted": True,
+    })
+    assert registration.status_code == 200
+
+    response = client.post("/api/v1/auth/login", json={
+        "username": email,
+        "password": "StrongPass123",
+    })
     assert response.status_code == 200
     data = response.json()
     assert "access_token" in data
     assert data["token_type"] == "bearer"
-    assert data["username"] == "admin"
+    assert data["username"] == email
 
 
 def test_telemetry_schema_normalization():

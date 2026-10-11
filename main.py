@@ -9,6 +9,7 @@ import re
 import time
 import asyncio
 import logging
+import secrets
 
 try:
     from dotenv import load_dotenv
@@ -36,6 +37,9 @@ from security import (
     create_access_token,
     verify_token,
     authenticate_user,
+    register_user,
+    verify_google_id_token,
+    USERS_DB,
     get_current_user
 )
 
@@ -243,8 +247,25 @@ class OrderDispatchRequest(BaseModel):
 
 
 class AuthLoginRequest(BaseModel):
-    username: str = Field(..., example="admin")
-    password: str = Field(..., example="admin123")
+    username: str = Field(..., example="name@company.com")
+    password: str = Field(..., example="SecurePass123")
+
+
+class GoogleAuthRequest(BaseModel):
+    credential: str = Field(..., min_length=1)
+    full_name: Optional[str] = Field(None, min_length=1, max_length=120)
+    company_name: Optional[str] = Field(None, max_length=120)
+    terms_accepted: bool = False
+
+
+class AuthRegisterRequest(BaseModel):
+    username: Optional[str] = Field(None, min_length=3, max_length=254, example="new_operator")
+    password: str = Field(..., min_length=8, example="StrongPass123")
+    confirm_password: str = Field(..., min_length=8)
+    email: str = Field(..., example="new.operator@wareflow.ai")
+    full_name: str = Field(..., min_length=1, max_length=120, example="New Operator")
+    company_name: str = Field(..., min_length=1, max_length=120, example="WareFlow Logistics")
+    terms_accepted: bool = Field(..., description="User acceptance of the Terms of Service and Privacy Policy")
 
 
 class ComplianceCheckRequest(BaseModel):
@@ -306,7 +327,7 @@ def health_check():
 @app.post("/api/v1/auth/token", summary="Issue JWT authentication token")
 def login(req: AuthLoginRequest):
     """
-    Authenticate demo user credentials ('admin'/'admin123', 'operator'/'operator123')
+    Authenticate registered user credentials
     and issue a signed Bearer JWT access token.
     """
     auth_user = authenticate_user(req.username, req.password)
@@ -323,6 +344,104 @@ def login(req: AuthLoginRequest):
         "token_type": "bearer",
         "username": auth_user["username"],
         "role": auth_user["role"]
+    }
+
+
+@app.post("/api/v1/auth/google", summary="Authenticate with Google")
+def google_login(req: GoogleAuthRequest):
+    """Verify a Google ID token and authenticate or register its verified account."""
+    try:
+        google_user = verify_google_id_token(req.credential)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    user_record = next(
+        (
+            user
+            for user in USERS_DB.values()
+            if user.get("email", "").lower() == google_user["email"]
+        ),
+        None,
+    )
+    if not user_record:
+        if req.full_name is None and req.company_name is None and not req.terms_accepted:
+            return {
+                "requires_registration": True,
+                "email": google_user["email"],
+                "full_name": str(google_user.get("name", "")).strip(),
+            }
+
+        try:
+            user_record = register_user(
+                username=google_user["email"],
+                password=secrets.token_urlsafe(48),
+                email=google_user["email"],
+                full_name=req.full_name or str(google_user.get("name", "")).strip(),
+                role="operator",
+                company_name=req.company_name,
+                terms_accepted=req.terms_accepted,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+
+    token = create_access_token(data={
+        "sub": user_record["username"],
+        "role": user_record["role"],
+    })
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "username": user_record["username"],
+        "role": user_record["role"],
+    }
+
+
+@app.post("/api/v1/auth/register", summary="Register a new WareFlow user")
+def register(req: AuthRegisterRequest):
+    """Create a new operator account and issue a JWT."""
+    if req.password != req.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password and confirmation do not match.",
+        )
+
+    try:
+        user_record = register_user(
+            username=req.username,
+            password=req.password,
+            email=req.email,
+            full_name=req.full_name,
+            role="operator",
+            company_name=req.company_name,
+            terms_accepted=req.terms_accepted,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    token = create_access_token(data={"sub": user_record["username"], "role": user_record["role"]})
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "username": user_record["username"],
+        "role": user_record["role"],
+        "email": user_record.get("email"),
+        "full_name": user_record.get("full_name"),
+        "company_name": user_record.get("company_name"),
     }
 
 
@@ -1043,4 +1162,3 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     debug = os.getenv("DEBUG", "True").lower() in ("true", "1")
     uvicorn.run("main:app", host=host, port=port, reload=debug)
-
