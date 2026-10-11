@@ -136,6 +136,7 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAuthToken()));
   const [currentUser, setCurrentUser] = useState(localStorage.getItem('wareflow_user') || '');
   const [userRole, setUserRole] = useState(localStorage.getItem('wareflow_role') || '');
+  const [companyName, setCompanyName] = useState(localStorage.getItem('wareflow_company_name') || '');
   const [activeTab, setActiveTab] = useState('overview');
 
   // Login & Registration Form State
@@ -222,9 +223,11 @@ function App() {
       clearAuthToken();
       localStorage.removeItem('wareflow_user');
       localStorage.removeItem('wareflow_role');
+      localStorage.removeItem('wareflow_company_name');
       setLoginPassword('');
       setCurrentUser('');
       setUserRole('');
+      setCompanyName('');
       setLoginError('Session expired. Please sign in again.');
     };
     window.addEventListener('wareflow_unauthorized', handleUnauthorized);
@@ -441,8 +444,10 @@ function App() {
       setIsAuthenticated(true);
       setCurrentUser(data.username);
       setUserRole(data.role || '');
+      setCompanyName(data.company_name || '');
       localStorage.setItem('wareflow_user', data.username);
       if (data.role) localStorage.setItem('wareflow_role', data.role);
+      if (data.company_name) localStorage.setItem('wareflow_company_name', data.company_name);
       setGlobalError('');
     } catch (err) {
       setLoginError(err.message || 'Invalid username or password.');
@@ -469,8 +474,10 @@ function App() {
       setIsAuthenticated(true);
       setCurrentUser(data.username);
       setUserRole(data.role || '');
+      setCompanyName(data.company_name || '');
       localStorage.setItem('wareflow_user', data.username);
       if (data.role) localStorage.setItem('wareflow_role', data.role);
+      if (data.company_name) localStorage.setItem('wareflow_company_name', data.company_name);
       setGlobalError('');
     } catch (err) {
       if (registration) throw err;
@@ -484,8 +491,10 @@ function App() {
     setIsAuthenticated(true);
     setCurrentUser(data.username);
     setUserRole(data.role || '');
+    setCompanyName(data.company_name || '');
     localStorage.setItem('wareflow_user', data.username);
     if (data.role) localStorage.setItem('wareflow_role', data.role);
+    if (data.company_name) localStorage.setItem('wareflow_company_name', data.company_name);
     setGlobalError('');
   };
 
@@ -493,9 +502,11 @@ function App() {
     clearAuthToken();
     localStorage.removeItem('wareflow_user');
     localStorage.removeItem('wareflow_role');
+    localStorage.removeItem('wareflow_company_name');
     setIsAuthenticated(false);
     setCurrentUser('');
     setUserRole('');
+    setCompanyName('');
     setActiveTab('overview');
   };
 
@@ -828,7 +839,7 @@ function App() {
         <header className="topbar">
           <div>
             <p className="overline">WAREHOUSE OPERATIONS / <span className="tab-highlight">{activePage?.label || 'Dashboard'}</span></p>
-            <h1>{activePage?.label === 'Dashboard' ? 'Warehouse Command Center' : activePage?.label}</h1>
+            <h1>{activePage?.label === 'Dashboard' ? (companyName || 'Warehouse Command Center') : activePage?.label}</h1>
           </div>
 
           <div className="header-actions">

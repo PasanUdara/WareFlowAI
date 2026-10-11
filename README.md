@@ -71,10 +71,13 @@ Create a local `.env` file from the provided template:
   ```bash
   cp .env.example .env
   ```
+
 - **On Windows PowerShell:**
   ```powershell
   Copy-Item .env.example .env
   ```
+
+User accounts are saved in SQLite at `data/wareflow_users.sqlite3` by default, so registrations remain available after restarting the API. Override the location with `WAREFLOW_USERS_DB_PATH` if needed. Passwords are stored as bcrypt hashes, not plaintext. Accounts registered before persistent storage was enabled existed only in memory and must be registered again.
 
 *(Optional)*: If you want to use live LLM parsing, open `.env` and configure your Groq API key:
 ```ini

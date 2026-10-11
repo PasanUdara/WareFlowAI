@@ -9,6 +9,7 @@ import time
 from google.oauth2 import id_token
 from fastapi.testclient import TestClient
 import main
+import security.auth as auth_module
 from main import app
 from security.auth import verify_google_id_token
 from security import (
@@ -83,6 +84,7 @@ def test_api_successful_login():
     assert "access_token" in data
     assert data["token_type"] == "bearer"
     assert data["username"] == email
+    assert data["company_name"] == "Login Test Warehouse"
 
 
 def test_api_invalid_login():
@@ -109,6 +111,7 @@ def test_register_user_success_and_duplicate_rejection():
     assert data["username"] == unique_username
     assert "access_token" in data
     assert data["role"] == "operator"
+    assert data["company_name"] == "WareFlow Test Warehouse"
 
     duplicate = client.post("/api/v1/auth/register", json={
         "username": unique_username,
@@ -147,6 +150,33 @@ def test_email_registration_records_company_and_terms_and_allows_email_login():
         "password": "StrongPass123",
     })
     assert login_response.status_code == 200
+
+
+def test_registered_users_are_persisted_in_sqlite_and_reloaded(tmp_path, monkeypatch):
+    database_path = tmp_path / "accounts.sqlite3"
+    monkeypatch.setattr(auth_module, "USER_DATABASE_PATH", database_path)
+    auth_module._load_users_from_database(database_path)
+    email = f"persistent_{int(time.time())}@wareflow.ai"
+
+    user = register_user(
+        username=email,
+        password="StrongPass123",
+        email=email,
+        full_name="Persistent User",
+        company_name="Persistent Warehouse",
+        terms_accepted=True,
+    )
+
+    try:
+        persisted_users = auth_module._load_users_from_database(database_path)
+        persisted_user = persisted_users[email]
+        assert persisted_user["email"] == email
+        assert persisted_user["company_name"] == "Persistent Warehouse"
+        assert persisted_user["hashed_password"] != "StrongPass123"
+        assert verify_password("StrongPass123", persisted_user["hashed_password"])
+        assert authenticate_user(email, "StrongPass123")["username"] == user["username"]
+    finally:
+        USERS_DB.pop(email, None)
 
 
 def test_registration_rejects_password_mismatch_and_missing_terms_consent():
@@ -221,6 +251,7 @@ def test_google_login_registers_unregistered_verified_google_user(monkeypatch):
     })
     assert registration_response.status_code == 200
     assert registration_response.json()["username"] == email
+    assert registration_response.json()["company_name"] == "Google Signup Warehouse"
     assert verify_token(registration_response.json()["access_token"])["sub"] == email
     assert USERS_DB[email]["terms_accepted"] is True
     assert USERS_DB[email]["company_name"] == "Google Signup Warehouse"

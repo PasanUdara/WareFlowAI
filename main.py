@@ -339,11 +339,13 @@ def login(req: AuthLoginRequest):
         )
     
     token = create_access_token(data={"sub": auth_user["username"], "role": auth_user["role"]})
+    user_record = USERS_DB.get(auth_user["username"].lower(), {})
     return {
         "access_token": token,
         "token_type": "bearer",
         "username": auth_user["username"],
-        "role": auth_user["role"]
+        "role": auth_user["role"],
+        "company_name": user_record.get("company_name"),
     }
 
 
@@ -405,6 +407,7 @@ def google_login(req: GoogleAuthRequest):
         "token_type": "bearer",
         "username": user_record["username"],
         "role": user_record["role"],
+        "company_name": user_record.get("company_name"),
     }
 
 

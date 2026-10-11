@@ -5,8 +5,10 @@ JWT token issuance, validation, password hashing, user registry, and FastAPI aut
 
 import os
 import re
+import sqlite3
 import time
 import logging
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 import jwt
 import bcrypt
@@ -43,7 +45,52 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
+USER_DATABASE_PATH = Path(os.getenv(
+    "WAREFLOW_USERS_DB_PATH",
+    str(Path(__file__).resolve().parent.parent / "data" / "wareflow_users.sqlite3"),
+))
 USERS_DB: Dict[str, Dict[str, Any]] = {}
+
+
+def _load_users_from_database(database_path: Path) -> Dict[str, Dict[str, Any]]:
+    """Create the users table if needed and load persisted user records."""
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database_path, timeout=10) as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username_key TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                full_name TEXT NOT NULL,
+                company_name TEXT NOT NULL,
+                terms_accepted INTEGER NOT NULL,
+                terms_accepted_at REAL NOT NULL,
+                role TEXT NOT NULL,
+                hashed_password TEXT NOT NULL
+            )
+        """)
+        rows = connection.execute("""
+            SELECT username_key, username, email, full_name, company_name,
+                   terms_accepted, terms_accepted_at, role, hashed_password
+            FROM users
+        """).fetchall()
+
+    return {
+        row[0]: {
+            "username": row[1],
+            "email": row[2],
+            "full_name": row[3],
+            "company_name": row[4],
+            "terms_accepted": bool(row[5]),
+            "terms_accepted_at": row[6],
+            "role": row[7],
+            "hashed_password": row[8],
+        }
+        for row in rows
+    }
+
+
+USERS_DB.update(_load_users_from_database(USER_DATABASE_PATH))
 
 
 def verify_google_id_token(credential: str) -> Dict[str, Any]:
@@ -98,7 +145,7 @@ def register_user(
     company_name: Optional[str] = None,
     terms_accepted: bool = False,
 ) -> Dict[str, Any]:
-    """Create a new user in the in-memory auth registry and return the user payload."""
+    """Create a user in persistent storage and return the public user payload."""
     validated = validate_registration_input(username, password, email)
     username_key = validated["username"].lower()
     if not terms_accepted:
@@ -129,6 +176,30 @@ def register_user(
         "role": role if role in {"administrator", "operator"} else "operator",
         "hashed_password": get_password_hash(validated["password"]),
     }
+    try:
+        with sqlite3.connect(USER_DATABASE_PATH, timeout=10) as connection:
+            connection.execute(
+                """
+                INSERT INTO users (
+                    username_key, username, email, full_name, company_name,
+                    terms_accepted, terms_accepted_at, role, hashed_password
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    username_key,
+                    user_record["username"],
+                    user_record["email"],
+                    user_record["full_name"],
+                    user_record["company_name"],
+                    int(user_record["terms_accepted"]),
+                    user_record["terms_accepted_at"],
+                    user_record["role"],
+                    user_record["hashed_password"],
+                ),
+            )
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("This username or work email is already registered.") from exc
+
     USERS_DB[username_key] = user_record
     logger.info("[Auth] Registered a new user account")
     return {
