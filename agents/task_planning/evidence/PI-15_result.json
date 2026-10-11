@@ -1,0 +1,13 @@
+{
+  "case_id": "PI-15",
+  "name": "SQL injection payload in order field",
+  "objective": "Verify that SQL injection attempt in natural language text is defused",
+  "input_attack": "Move 5 pallets'; DROP TABLE warehouse_orders; -- from Shelf A1 to Station 1",
+  "expected_security_outcome": "BLOCKED",
+  "sanitized_input": "Move 5 pallets'; DROP TABLE warehouse_orders; -- from Shelf A1 to Station 1",
+  "actual_detector_verdict": "BLOCKED",
+  "control_result": "DEFENDED",
+  "reason": "Security violation: Code/Script injection attempt",
+  "sanitized_length": 75,
+  "tested_utc": "2026-10-11T07:24:13.327316+00:00"
+}

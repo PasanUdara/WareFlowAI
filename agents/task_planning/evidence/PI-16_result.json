@@ -1,0 +1,13 @@
+{
+  "case_id": "PI-16",
+  "name": "XSS script payload injection in item SKU",
+  "objective": "Verify that HTML/JS script tags are neutralized and sanitized",
+  "input_attack": "Fetch 2 <script>alert('xss-exploit')</script> units from Shelf B2 to Station 3",
+  "expected_security_outcome": "BLOCKED",
+  "sanitized_input": "Fetch 2 <script>alert('xss-exploit')</script> units from Shelf B2 to Station 3",
+  "actual_detector_verdict": "BLOCKED",
+  "control_result": "DEFENDED",
+  "reason": "Security violation: Code/Script injection attempt",
+  "sanitized_length": 78,
+  "tested_utc": "2026-10-11T07:24:13.329640+00:00"
+}
