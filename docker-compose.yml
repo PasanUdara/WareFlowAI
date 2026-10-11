@@ -67,6 +67,7 @@ services:
       - "5173:5173"
     environment:
       - VITE_API_PROXY_TARGET=http://app:8000
+      - VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID:-}
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public

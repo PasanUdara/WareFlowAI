@@ -55,6 +55,34 @@ export async function loginUser(username, password) {
   return data;
 }
 
+export async function loginWithGoogle(credential, registration = {}) {
+  const response = await fetch(`${API_BASE}/api/v1/auth/google`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential, ...registration })
+  });
+
+  const data = await handleResponse(response);
+  if (data.access_token) {
+    setAuthToken(data.access_token);
+  }
+  return data;
+}
+
+export async function registerUser({ username, password, confirm_password, email, full_name, company_name, terms_accepted }) {
+  const response = await fetch(`${API_BASE}/api/v1/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, confirm_password, email, full_name, company_name, terms_accepted })
+  });
+
+  const data = await handleResponse(response);
+  if (data.access_token) {
+    setAuthToken(data.access_token);
+  }
+  return data;
+}
+
 export async function fetchFleetStatus() {
   const response = await fetch(`${API_BASE}/api/v1/fleet/status`, {
     headers: getHeaders()
