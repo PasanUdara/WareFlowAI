@@ -94,7 +94,7 @@ For running Vite directly from `frontend/`, also create `frontend/.env.local` wi
 
 ### Deploying the dashboard to Vercel
 
-The React/Vite dashboard can be deployed to Vercel, but the complete application cannot run on Vercel alone: the FastAPI service owns the live simulation and WebSocket connection. Deploy that service separately as an always-on Render web service using the repository's `render.yaml` Blueprint. The blueprint creates a persistent disk for the SQLite account database; it uses a paid Render plan.
+The React/Vite dashboard can be deployed to Vercel, but the complete application cannot run on Vercel alone: the FastAPI service owns the live simulation and WebSocket connection. Deploy that service separately as a Render web service using the repository's `render.yaml` Blueprint. The Blueprint uses Render's free plan, which may spin down when idle and has no persistent disk; SQLite accounts and in-memory Qdrant data can be lost when the service restarts or redeploys.
 
 1. In Vercel, import this repository and set the project **Root Directory** to `frontend`. Deploy once to get the production site origin. Vercel uses `frontend/vercel.json` for SPA route fallback.
 2. In Render, create a Blueprint from this repository and deploy the `wareflowai-api` service. Set `ALLOWED_ORIGINS` to the exact Vercel site origin (for example, `https://your-project.vercel.app`, without a trailing slash). The blueprint generates `JWT_SECRET_KEY`; optionally set `OPENAI_API_KEY` for live LLM features. `QDRANT_MODE=memory` is suitable for a demo; configure an external Qdrant service for persistent SOP vector data.
