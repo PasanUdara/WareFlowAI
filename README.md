@@ -92,6 +92,17 @@ VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ```
 For running Vite directly from `frontend/`, also create `frontend/.env.local` with `VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com`. Google sign-in verifies the ID token on the API. New users can sign up with Google by providing their name, warehouse name, and acceptance of the Terms of Service and Privacy Policy.
 
+### Deploying the dashboard to Vercel
+
+The React/Vite dashboard can be deployed to Vercel, but the complete application cannot run on Vercel alone: the FastAPI service owns the live simulation and WebSocket connection. Deploy that service separately as an always-on Render web service using the repository's `render.yaml` Blueprint. The blueprint creates a persistent disk for the SQLite account database; it uses a paid Render plan.
+
+1. In Vercel, import this repository and set the project **Root Directory** to `frontend`. Deploy once to get the production site origin. Vercel uses `frontend/vercel.json` for SPA route fallback.
+2. In Render, create a Blueprint from this repository and deploy the `wareflowai-api` service. Set `ALLOWED_ORIGINS` to the exact Vercel site origin (for example, `https://your-project.vercel.app`, without a trailing slash). The blueprint generates `JWT_SECRET_KEY`; optionally set `OPENAI_API_KEY` for live LLM features. `QDRANT_MODE=memory` is suitable for a demo; configure an external Qdrant service for persistent SOP vector data.
+3. In Vercel's project environment variables, set `VITE_API_BASE` to the Render service's HTTPS origin (no trailing slash), and `VITE_WS_URL` to `wss://<render-service-host>/ws/telemetry`. These are build-time variables, so redeploy after changing them.
+4. If Google sign-in is enabled, set `VITE_GOOGLE_CLIENT_ID` in Vercel and `GOOGLE_CLIENT_ID` on Render. Add the Vercel site origin to the Google OAuth client's authorized JavaScript origins.
+
+Do not put API keys, JWT secrets, or other private values in Vercel variables prefixed with `VITE_`; Vite bundles those values into public browser code. Never upload `.env` files to Vercel or Render.
+
 #### 4. Build and Start the Services
 
 - **Run Full Stack (Frontend + Backend + Qdrant DB):**

@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: wareflowai-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: WAREFLOW_USERS_DB_PATH
+        value: /var/data/wareflow_users.sqlite3
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: QDRANT_MODE
+        value: memory
+      - key: OPENAI_API_KEY
+        sync: false
+    disk:
+      name: wareflowai-data
+      mountPath: /var/data
+      sizeGB: 1
